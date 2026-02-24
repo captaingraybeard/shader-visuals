@@ -153,7 +153,8 @@ export class App {
   private async registerSW(): Promise<void> {
     if ('serviceWorker' in navigator) {
       try {
-        await navigator.serviceWorker.register('/sw.js');
+        const base = import.meta.env.BASE_URL || '/';
+        await navigator.serviceWorker.register(base + 'sw.js');
       } catch {
         // Service worker registration failed — not critical
       }

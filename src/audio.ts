@@ -23,8 +23,24 @@ export class AudioEngine {
 
   async init(): Promise<void> {
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.ctx = new AudioContext();
+      // Create AudioContext FIRST with playback category so iOS doesn't kill background music
+      // @ts-expect-error - webkit prefix for iOS Safari
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AudioCtx({
+        // Tell iOS this is for monitoring, not recording — allows background music to continue
+        sampleRate: 44100,
+      });
+
+      // On iOS, we need to set the audio session to allow mixing
+      // getUserMedia with audio constraints that hint at monitoring use
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
       this.analyser.smoothingTimeConstant = 0.4;
@@ -34,6 +50,7 @@ export class AudioEngine {
     } catch (e) {
       console.warn('AudioEngine: mic access denied or unavailable', e);
       this.failed = true;
+      throw e;
     }
   }
 
@@ -47,9 +64,26 @@ export class AudioEngine {
 
   stop(): void {
     this.active = false;
-    if (this.ctx && this.ctx.state === 'running') {
-      this.ctx.suspend();
+    // Stop the mic stream tracks to release the mic and let iOS resume normal audio
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
     }
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
+    }
+    if (this.ctx) {
+      this.ctx.close();
+      this.ctx = null;
+    }
+    this.analyser = null;
+    this.freqData = new Uint8Array(0);
+    this.smoothBass = 0;
+    this.smoothMid = 0;
+    this.smoothHigh = 0;
+    this.rollingAvg = 0;
+    this.beat = 0;
   }
 
   get isActive(): boolean {
