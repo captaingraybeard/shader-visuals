@@ -169,9 +169,10 @@ export async function estimateSegments(
       return { segments, count: CATEGORY_COUNT, labels: foundLabels };
 
     } catch (e) {
-      console.warn('Segmentation failed, falling back to depth zones:', e);
+      const errMsg = (e as Error).message || String(e);
+      console.warn('Segmentation failed, falling back to depth zones:', errMsg);
       pipelineFailed = true;
-      onStatus?.('Segmentation failed, using depth zones');
+      onStatus?.(`Seg failed: ${errMsg.slice(0, 60)}. Using depth zones`);
     }
   }
 
@@ -200,5 +201,16 @@ function depthFallback(
   }
 
   console.log(`[segment] Depth fallback: 6 categories`);
-  return { segments, count: CATEGORY_COUNT, labels: ['depth-fallback'] };
+  return {
+    segments,
+    count: CATEGORY_COUNT,
+    labels: [
+      'close objects→cat0(depth)',
+      'mid vegetation→cat1(depth)',
+      'sky/far→cat2(depth)',
+      'ground→cat3(depth)',
+      'mid structures→cat4(depth)',
+      'background→cat5(depth)',
+    ],
+  };
 }

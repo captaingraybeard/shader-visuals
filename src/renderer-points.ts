@@ -405,7 +405,9 @@ export class PointCloudRenderer {
     if (u.u_coherence) gl.uniform1f(u.u_coherence, opts.coherence);
     if (u.u_pointScale) gl.uniform1f(u.u_pointScale, opts.pointScale);
     if (u.u_form) gl.uniform1f(u.u_form, opts.form);
-    if (u.u_highlightCat) gl.uniform1f(u.u_highlightCat, opts.highlightCat);
+    // Must always set — GLSL defaults to 0.0 which would highlight cat 0
+    const hlLoc = u.u_highlightCat;
+    if (hlLoc !== null) gl.uniform1f(hlLoc, opts.highlightCat);
 
     // Crossfade logic
     let crossT = 1.0;

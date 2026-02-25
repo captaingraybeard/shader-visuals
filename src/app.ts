@@ -181,7 +181,8 @@ export class App {
           dSum += depthMap[i];
         }
         const dMean = dSum / depthMap.length;
-        this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | Scene segmented`, 4000);
+        const isML = !segResult.labels?.some(l => l.includes('depth'));
+        this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | ${isML ? 'ML segmented' : 'Depth-based segments'}`, 5000);
 
         // Show segment debug panel
         if (segResult.labels && segResult.labels.length > 0) {
