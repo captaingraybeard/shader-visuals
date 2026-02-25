@@ -174,6 +174,15 @@ export class UI {
     this.settingsPanel = el('div', 'sv-settings');
     const settingsTitle = el('div', 'sv-settings-title');
     settingsTitle.textContent = 'Settings';
+
+    // Close button for settings
+    const settingsClose = el('button', 'sv-btn sv-btn-close') as HTMLButtonElement;
+    settingsClose.textContent = '✕';
+    settingsClose.addEventListener('click', () => {
+      this.settingsOpen = false;
+      this.settingsPanel.classList.add('sv-hidden');
+    });
+    settingsTitle.appendChild(settingsClose);
     const apiKeyGroup = el('div', 'sv-apikey-group');
     const apiKeyLabel = el('label', 'sv-label');
     apiKeyLabel.textContent = 'OpenAI API Key';
@@ -594,6 +603,18 @@ const CSS = `
   letter-spacing: 0.1em;
   color: var(--sv-text-dim);
   margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sv-btn-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  font-size: 14px;
+  padding: 0;
+  line-height: 1;
 }
 .sv-apikey-group {
   display: flex;

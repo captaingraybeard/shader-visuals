@@ -235,12 +235,16 @@ export class App {
   };
 
   private async registerSW(): Promise<void> {
+    // Unregister any existing service workers to prevent stale cache issues
     if ('serviceWorker' in navigator) {
-      try {
-        const base = import.meta.env.BASE_URL || '/';
-        await navigator.serviceWorker.register(base + 'sw.js');
-      } catch {
-        // Service worker registration failed — not critical
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) {
+        await reg.unregister();
+      }
+      // Clear all caches
+      const keys = await caches.keys();
+      for (const key of keys) {
+        await caches.delete(key);
       }
     }
   }
