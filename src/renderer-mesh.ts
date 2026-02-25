@@ -173,6 +173,12 @@ export interface MeshData {
   indexCount: number;
 }
 
+/**
+ * Build a cylindrical mesh that wraps around the viewer.
+ * Image maps onto the inside of a cylinder, depth pushes vertices inward.
+ * Depth discontinuity detection skips triangles at foreground/background edges
+ * so foreground objects appear as separate floating geometry.
+ */
 export function buildMeshData(
   depthMap: Float32Array,
   srcW: number,
@@ -186,6 +192,16 @@ export function buildMeshData(
   const positions = new Float32Array(vertexCount * 3);
   const uvs = new Float32Array(vertexCount * 2);
 
+  // Cylinder parameters
+  const CYLINDER_RADIUS = 4.0;    // base radius of the cylinder
+  const DEPTH_PUSH = 2.5;         // how far depth pushes vertices inward
+  const HEIGHT = 3.0;             // half-height of cylinder
+  const ARC = Math.PI * 1.6;     // how much of the cylinder the image covers (~290°)
+  const ARC_OFFSET = -ARC / 2;    // center the image in front
+
+  // Store depths for discontinuity detection
+  const depthGrid = new Float32Array(vertexCount);
+
   for (let y = 0; y < gh; y++) {
     for (let x = 0; x < gw; x++) {
       const vi = y * gw + x;
@@ -195,21 +211,30 @@ export function buildMeshData(
       // Sample depth at this UV
       const sx = Math.min(Math.floor(u * srcW), srcW - 1);
       const sy = Math.min(Math.floor(v * srcH), srcH - 1);
-      const depth = depthMap[sy * srcW + sx];
+      const depth = depthMap[sy * srcW + sx]; // 0=far, 1=close
+      depthGrid[vi] = depth;
 
-      // Position: x,y in [-1,1], z from depth
-      positions[vi * 3] = u * 2 - 1;
-      positions[vi * 3 + 1] = -(v * 2 - 1); // flip Y
-      positions[vi * 3 + 2] = (depth - 0.5) * 2.0;
+      // Angle around cylinder (horizontal)
+      const angle = ARC_OFFSET + u * ARC;
+
+      // Radius: far things at cylinder wall, close things pushed inward
+      const r = CYLINDER_RADIUS - depth * DEPTH_PUSH;
+
+      // Cylindrical coordinates → cartesian
+      positions[vi * 3]     = Math.sin(angle) * r;           // X
+      positions[vi * 3 + 1] = HEIGHT * (1 - 2 * v);          // Y (top to bottom)
+      positions[vi * 3 + 2] = -Math.cos(angle) * r;          // Z (negative = in front)
 
       uvs[vi * 2] = u;
       uvs[vi * 2 + 1] = v;
     }
   }
 
-  // Build index buffer for triangle strip grid
-  const quadCount = (gw - 1) * (gh - 1);
-  const indices = new Uint32Array(quadCount * 6);
+  // Build index buffer with depth discontinuity culling
+  // Skip triangles where adjacent vertices have large depth difference
+  const DEPTH_THRESHOLD = 0.15; // skip triangle if depth diff > this
+  const maxQuads = (gw - 1) * (gh - 1);
+  const indices = new Uint32Array(maxQuads * 6);
   let idx = 0;
 
   for (let y = 0; y < gh - 1; y++) {
@@ -218,6 +243,21 @@ export function buildMeshData(
       const tr = tl + 1;
       const bl = (y + 1) * gw + x;
       const br = bl + 1;
+
+      const dTL = depthGrid[tl];
+      const dTR = depthGrid[tr];
+      const dBL = depthGrid[bl];
+      const dBR = depthGrid[br];
+
+      // Check max depth difference across the quad
+      const maxD = Math.max(dTL, dTR, dBL, dBR);
+      const minD = Math.min(dTL, dTR, dBL, dBR);
+
+      if (maxD - minD > DEPTH_THRESHOLD) {
+        // Depth discontinuity — skip this quad entirely
+        // This prevents stretchy triangles at foreground/background edges
+        continue;
+      }
 
       indices[idx++] = tl;
       indices[idx++] = bl;

@@ -2,15 +2,18 @@
 // Audio-driven movement: bass = shake, beat = direction change, energy = speed
 
 export class AutoCamera {
-  // Orbit state (spherical coords around origin)
-  private theta = 0;       // horizontal angle
-  private phi = 0.3;       // vertical angle (0 = front, +/- = up/down)
-  private radius = 2.8;    // distance from center
+  // Look direction (camera stays near origin, looks outward at the cylinder)
+  private theta = 0;       // horizontal look angle
+  private phi = 0;         // vertical look angle
   
   // Target values for smooth lerp
   private targetTheta = 0;
-  private targetPhi = 0.3;
-  private targetRadius = 2.8;
+  private targetPhi = 0;
+  
+  // Small position drift (stays near center)
+  private posX = 0;
+  private posY = 0;
+  private posZ = 0;
 
   // Orbit speed
   private orbitSpeed = 0.08;
@@ -36,11 +39,12 @@ export class AutoCamera {
 
   resetForNewScene(): void {
     this.theta = 0;
-    this.phi = 0.3;
-    this.radius = 2.8;
+    this.phi = 0;
     this.targetTheta = 0;
-    this.targetPhi = 0.3;
-    this.targetRadius = 2.8;
+    this.targetPhi = 0;
+    this.posX = 0;
+    this.posY = 0;
+    this.posZ = 0;
     this.phase = 0;
     this.shakeX = 0;
     this.shakeY = 0;
@@ -54,55 +58,55 @@ export class AutoCamera {
     dt = Math.min(dt, 0.05);
     this.phase += dt;
 
-    // Continuous slow orbit — always moving
-    const audioSpeedBoost = 1.0 + bass * 0.8 + mid * 0.4;
+    // Slow panning look — always gently looking around inside the cylinder
+    const audioSpeedBoost = 1.0 + bass * 0.5 + mid * 0.3;
     this.targetTheta += this.orbitSpeed * dt * audioSpeedBoost;
 
-    // Gentle vertical drift (sinusoidal)
-    this.targetPhi = 0.3 + Math.sin(this.phase * 0.15) * 0.25;
+    // Gentle vertical look drift
+    this.targetPhi = Math.sin(this.phase * 0.12) * 0.3;
 
-    // Gentle radius breathing
-    this.targetRadius = 2.8 + Math.sin(this.phase * 0.2) * 0.4 + bass * 0.3;
-
-    // Beat triggers bigger direction changes
+    // Beat triggers look direction changes
     if (beat > 0.5 && this.phase - this.lastBeatTime > 0.4) {
       this.lastBeatTime = this.phase;
-      // Reverse orbit direction or jump angle
-      this.orbitSpeed = -this.orbitSpeed + (Math.random() - 0.5) * 0.06;
-      // Keep minimum orbit speed
-      if (Math.abs(this.orbitSpeed) < 0.04) {
-        this.orbitSpeed = (this.orbitSpeed >= 0 ? 1 : -1) * 0.06;
+      this.orbitSpeed = -this.orbitSpeed + (Math.random() - 0.5) * 0.04;
+      if (Math.abs(this.orbitSpeed) < 0.03) {
+        this.orbitSpeed = (this.orbitSpeed >= 0 ? 1 : -1) * 0.04;
       }
-      this.targetPhi += (Math.random() - 0.5) * 0.3;
+      this.targetPhi += (Math.random() - 0.5) * 0.2;
     }
 
-    // Clamp phi (don't go directly above/below)
-    this.targetPhi = Math.max(-0.5, Math.min(0.8, this.targetPhi));
-    
-    // Clamp radius (stay in scene)
-    this.targetRadius = Math.max(1.5, Math.min(4.0, this.targetRadius));
+    // Clamp vertical look (don't look straight up/down)
+    this.targetPhi = Math.max(-0.6, Math.min(0.6, this.targetPhi));
 
     // Smooth interpolation
     const lerpRate = 2.0 * dt;
     this.theta += (this.targetTheta - this.theta) * lerpRate;
     this.phi += (this.targetPhi - this.phi) * lerpRate;
-    this.radius += (this.targetRadius - this.radius) * lerpRate;
+
+    // Gentle position drift (small movements inside the cylinder)
+    this.posX = Math.sin(this.phase * 0.08) * 0.3;
+    this.posY = Math.sin(this.phase * 0.06) * 0.15;
+    this.posZ = Math.cos(this.phase * 0.1) * 0.2;
 
     // Bass camera shake
-    const shakeAmount = bass * 0.015 + beat * 0.025;
+    const shakeAmount = bass * 0.01 + beat * 0.02;
     this.shakeX = (Math.random() - 0.5) * shakeAmount;
     this.shakeY = (Math.random() - 0.5) * shakeAmount;
   }
 
   getViewMatrix(): Float32Array {
-    // Convert spherical to cartesian
-    const cosPhi = Math.cos(this.phi);
-    const ex = Math.sin(this.theta) * cosPhi * this.radius + this.shakeX;
-    const ey = Math.sin(this.phi) * this.radius + this.shakeY;
-    const ez = Math.cos(this.theta) * cosPhi * this.radius;
+    // Camera at near-origin, looking outward at the cylinder
+    const ex = this.posX + this.shakeX;
+    const ey = this.posY + this.shakeY;
+    const ez = this.posZ;
 
-    // Always look at center of scene
-    return lookAt(ex, ey, ez, 0, 0, 0, 0, 1, 0);
+    // Look direction from angles
+    const cosP = Math.cos(this.phi);
+    const tx = ex + Math.sin(this.theta) * cosP;
+    const ty = ey + Math.sin(this.phi);
+    const tz = ez - Math.cos(this.theta) * cosP;
+
+    return lookAt(ex, ey, ez, tx, ty, tz, 0, 1, 0);
   }
 
   getProjectionMatrix(aspect: number): Float32Array {

@@ -6,7 +6,7 @@ export async function generateImage(
   prompt: string,
   apiKey: string,
 ): Promise<HTMLImageElement> {
-  const enhancedPrompt = `Highly detailed, cinematic, ${prompt}`;
+  const enhancedPrompt = `Ultra wide panoramic view, immersive environment, highly detailed, cinematic, ${prompt}. Wide angle, showing full surrounding environment.`;
 
   const res = await fetch(DALLE_URL, {
     method: 'POST',
@@ -18,7 +18,7 @@ export async function generateImage(
       model: 'dall-e-3',
       prompt: enhancedPrompt,
       n: 1,
-      size: '1024x1024',
+      size: '1792x1024',
       quality: 'standard',
       response_format: 'b64_json',
     }),
