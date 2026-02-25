@@ -173,7 +173,7 @@ void main() {
   v_color += vec3(0.08, 0.04, 0.1) * u_beat;
 
   // Highlight mode: dim non-selected categories, brighten selected
-  if (u_highlightCat >= 0.0) {
+  if (u_highlightCat > -0.5) {
     float catF = float(cat);
     if (abs(catF - u_highlightCat) > 0.5) {
       // Not selected — dim heavily

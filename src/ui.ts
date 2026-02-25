@@ -317,10 +317,40 @@ export class UI {
     panel.id = 'sv-segment-panel';
     panel.style.cssText = `
       position:fixed; bottom:80px; left:10px; z-index:1001;
-      background:rgba(0,0,0,0.75); backdrop-filter:blur(8px);
-      border-radius:10px; padding:8px 10px; max-width:260px;
-      font-size:11px; color:#fff; pointer-events:auto;
+      background:rgba(0,0,0,0.8); backdrop-filter:blur(10px);
+      border-radius:12px; padding:10px 12px; max-width:280px;
+      font-size:12px; color:#fff; pointer-events:auto;
+      touch-action:none; user-select:none;
     `;
+
+    // Make draggable
+    let dragX = 0, dragY = 0, isDragging = false;
+    const onDragStart = (x: number, y: number) => {
+      dragX = x - panel.offsetLeft;
+      dragY = y - panel.offsetTop;
+      isDragging = true;
+    };
+    const onDragMove = (x: number, y: number) => {
+      if (!isDragging) return;
+      panel.style.left = `${x - dragX}px`;
+      panel.style.top = `${y - dragY}px`;
+      panel.style.bottom = 'auto';
+    };
+    const onDragEnd = () => { isDragging = false; };
+
+    panel.addEventListener('mousedown', (e) => onDragStart(e.clientX, e.clientY));
+    document.addEventListener('mousemove', (e) => onDragMove(e.clientX, e.clientY));
+    document.addEventListener('mouseup', onDragEnd);
+    panel.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      onDragStart(t.clientX, t.clientY);
+    }, { passive: true });
+    document.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+      const t = e.touches[0];
+      onDragMove(t.clientX, t.clientY);
+    });
+    document.addEventListener('touchend', onDragEnd);
 
     const title = el('div', '');
     title.style.cssText = 'font-weight:bold; margin-bottom:4px; font-size:12px;';
@@ -365,10 +395,8 @@ export class UI {
       row.appendChild(dot);
       row.appendChild(text);
 
-      row.addEventListener('click', (e) => {
-        e.stopPropagation();
+      const toggleHighlight = () => {
         if (activeBtn === row) {
-          // Deselect
           row.style.background = '';
           activeBtn = null;
           onHighlight(null);
@@ -377,6 +405,22 @@ export class UI {
           row.style.background = `${catColors[cat]}33`;
           activeBtn = row;
           onHighlight(cat);
+        }
+      };
+
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleHighlight();
+      });
+      // iOS touch support
+      let touchMoved = false;
+      row.addEventListener('touchstart', () => { touchMoved = false; }, { passive: true });
+      row.addEventListener('touchmove', () => { touchMoved = true; }, { passive: true });
+      row.addEventListener('touchend', (e) => {
+        if (!touchMoved) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleHighlight();
         }
       });
 

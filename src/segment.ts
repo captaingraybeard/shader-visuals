@@ -170,9 +170,13 @@ export async function estimateSegments(
 
     } catch (e) {
       const errMsg = (e as Error).message || String(e);
-      console.warn('Segmentation failed, falling back to depth zones:', errMsg);
+      const errStack = (e as Error).stack?.slice(0, 200) || '';
+      console.error('Segmentation failed:', errMsg, errStack);
       pipelineFailed = true;
-      onStatus?.(`Seg failed: ${errMsg.slice(0, 60)}. Using depth zones`);
+      // Show full error so user can report it
+      onStatus?.(`Seg failed: ${errMsg.slice(0, 80)}`);
+      // Brief delay so user sees the error
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 
