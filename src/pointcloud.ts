@@ -99,8 +99,8 @@ export function buildPointCloud(
       const nx = (x / w) * 2 - 1;
       const ny = -((y / h) * 2 - 1); // flip Y so top is up
 
-      // Depth: 0-1 mapped to z range [-0.5, 0.5]
-      const z = depthMap[i] - 0.5;
+      // Depth: 0-1 mapped to z range [-1.0, 1.0] for more dramatic depth
+      const z = (depthMap[i] - 0.5) * 2.0;
 
       positions[idx * 3] = nx;
       positions[idx * 3 + 1] = ny;

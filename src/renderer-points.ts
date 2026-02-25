@@ -34,9 +34,9 @@ void main() {
   // Original position
   vec3 pos = a_position;
 
-  // depth is stored in a_position.z (mapped from depth 0-1 to z -0.5..0.5)
+  // depth is stored in a_position.z (mapped from depth 0-1 to z -1.0..1.0)
   // Recover normalized depth: 0=far, 1=close
-  float depthFactor = a_position.z + 0.5;
+  float depthFactor = a_position.z * 0.5 + 0.5;
 
   // ── Coherence displacement ──
   // Low coherence → scatter points using noise
@@ -77,23 +77,24 @@ void main() {
 
   // ── Point size: coherence boost + depth perspective ──
   float baseSize = u_pointScale;
-  float coherenceBoost = u_coherence * u_coherence * 3.0; // quadratic — big jump near 1.0
-  float audioPtSize = u_bass * 2.0 + u_beat * 3.0;
+  float coherenceBoost = u_coherence * u_coherence * 8.0; // quadratic — big jump near 1.0
+  float audioPtSize = u_bass * 3.0 + u_beat * 4.0;
   float ptSize = baseSize + coherenceBoost + audioPtSize;
 
   // Closer points are bigger (perspective)
-  ptSize *= (0.5 + depthFactor * 0.5);
+  ptSize *= (0.6 + depthFactor * 0.8);
 
   // Minimum size when scattered so points don't disappear
-  gl_PointSize = max(1.5, ptSize);
+  gl_PointSize = max(2.0, ptSize);
 
-  v_color = a_color;
+  // Boost color brightness — raw image colors are too dark as points
+  v_color = a_color * 1.5 + vec3(0.1);
 
   // High frequencies add brightness shimmer
-  v_color += vec3(u_high * 0.15 * h1, u_high * 0.1 * h2, u_high * 0.2 * h3);
+  v_color += vec3(u_high * 0.2 * h1, u_high * 0.15 * h2, u_high * 0.25 * h3);
 
   // Beat flash
-  v_color += vec3(0.15, 0.08, 0.2) * u_beat;
+  v_color += vec3(0.2, 0.1, 0.25) * u_beat;
 
   v_alpha = u_transition;
   v_coherence = u_coherence;

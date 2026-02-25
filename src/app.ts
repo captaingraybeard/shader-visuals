@@ -215,7 +215,8 @@ export class App {
       const effectiveCoherence = Math.max(0, this.coherence - audioData.u_beat * 0.3);
 
       // Point scale based on canvas size (smaller on mobile for perf)
-      const pointScale = Math.max(2, Math.min(6, canvas.clientWidth / 300));
+      const dpr = window.devicePixelRatio || 1;
+      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 200) * dpr));
 
       this.pointRenderer.render({
         projection: this.camera.getProjectionMatrix(aspect),
