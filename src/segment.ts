@@ -1,101 +1,102 @@
-// Image segmentation — ML via @xenova/transformers with depth-zone fallback
-// Assigns each pixel a SEMANTIC audio category (0-5) based on what kind of object it is
+// Image segmentation — SegFormer-B0 semantic segmentation via @xenova/transformers
+// Assigns each pixel a semantic audio category (0-5) based on ADE20K class labels
 
-import { pipeline } from '@xenova/transformers';
+import {
+  AutoProcessor,
+  SegformerForSemanticSegmentation,
+  RawImage,
+} from '@xenova/transformers';
 
-type SegPipeline = Awaited<ReturnType<typeof pipeline<'image-segmentation'>>>;
+type SegModel = Awaited<ReturnType<typeof SegformerForSemanticSegmentation.from_pretrained>>;
+type SegProcessor = Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>;
 
-let segPipeline: SegPipeline | null = null;
-let pipelineFailed = false;
+let segModel: SegModel | null = null;
+let segProcessor: SegProcessor | null = null;
+let modelFailed = false;
 
 /**
  * Audio categories — each responds to different frequency bands.
- * The number is baked into the point cloud as a normalized float (0-1).
  */
-export const AUDIO_CATEGORIES = {
-  BASS_SUBJECT:  0,  // People, animals, main subjects → sub-bass + bass (breathing, pulsing)
-  MID_ORGANIC:   1,  // Trees, plants, vegetation → low-mid + mid (swaying, organic movement)
-  HIGH_SKY:      2,  // Sky, clouds, celestial → brilliance + air (shimmer, sparkle)
-  BEAT_GROUND:   3,  // Ground, floor, terrain, water → beat-reactive (ripple, impact)
-  MID_STRUCTURE: 4,  // Buildings, furniture, vehicles → upper-mid + presence (vibration, resonance)
-  LOW_AMBIENT:   5,  // Walls, misc background → low-mid (subtle drift)
-} as const;
-
 export const CATEGORY_COUNT = 6;
 
 /**
- * ADE20K class labels → audio category mapping.
- * ADE20K has 150 classes. We map each to one of our 6 audio categories.
+ * ADE20K 150 class indices → audio category (0-5).
+ * Reference: https://docs.google.com/spreadsheets/d/1se8YEtb2detS7OuPE86fXGyD269pMycAWe2mtKUj2W8
+ *
+ * 0 = BASS_SUBJECT (people, animals)
+ * 1 = MID_ORGANIC (trees, plants, vegetation)
+ * 2 = HIGH_SKY (sky, clouds, light sources)
+ * 3 = BEAT_GROUND (ground, water, terrain)
+ * 4 = MID_STRUCTURE (buildings, furniture, vehicles)
+ * 5 = LOW_AMBIENT (walls, misc background)
  */
-const ADE20K_TO_CATEGORY: Record<string, number> = {
-  // BASS_SUBJECT (0) — living things, main subjects
-  'person': 0, 'animal': 0, 'dog': 0, 'cat': 0, 'bird': 0, 'horse': 0,
-  'cow': 0, 'sheep': 0, 'elephant': 0, 'bear': 0, 'zebra': 0, 'giraffe': 0,
-  'sculpture': 0, 'statue': 0, 'figure': 0, 'doll': 0,
+const ADE20K_CLASS_TO_CATEGORY: number[] = (() => {
+  const map = new Array(150).fill(5); // default: ambient
 
-  // MID_ORGANIC (1) — vegetation, nature
-  'tree': 1, 'palm': 1, 'grass': 1, 'plant': 1, 'flower': 1, 'bush': 1,
-  'field': 1, 'forest': 1, 'leaf': 1, 'branch': 1, 'hedge': 1, 'moss': 1,
-  'jungle': 1, 'garden': 1, 'vineyard': 1, 'crop': 1, 'vegetation': 1,
+  // BASS_SUBJECT (0): people, animals
+  [12, 75, 126, 132, 147].forEach(i => map[i] = 0);
+  // 12=person, 75=sculpture, 126=animal, 132=statue, 147=doll
 
-  // HIGH_SKY (2) — sky, atmosphere, celestial
-  'sky': 2, 'cloud': 2, 'sun': 2, 'moon': 2, 'star': 2, 'aurora': 2,
-  'rainbow': 2, 'fog': 2, 'mist': 2, 'smoke': 2, 'light': 2, 'lamp': 2,
-  'chandelier': 2, 'candle': 2, 'fire': 2, 'firework': 2, 'lightning': 2,
+  // MID_ORGANIC (1): trees, plants, vegetation
+  [4, 9, 17, 29, 66, 72, 73].forEach(i => map[i] = 1);
+  // 4=tree, 9=grass, 17=plant, 29=field, 66=palm, 72=flower, 73=bush
 
-  // BEAT_GROUND (3) — ground, water, terrain
-  'earth': 3, 'ground': 3, 'floor': 3, 'road': 3, 'path': 3, 'sidewalk': 3,
-  'sand': 3, 'snow': 3, 'ice': 3, 'rock': 3, 'stone': 3, 'mountain': 3,
-  'hill': 3, 'cliff': 3, 'river': 3, 'lake': 3, 'sea': 3, 'ocean': 3,
-  'water': 3, 'waterfall': 3, 'pond': 3, 'pool': 3, 'fountain': 3,
-  'beach': 3, 'desert': 3, 'dirt': 3, 'mud': 3, 'carpet': 3, 'rug': 3,
-  'tile': 3, 'pavement': 3, 'bridge': 3,
+  // HIGH_SKY (2): sky, clouds, light
+  [2, 25, 82, 85, 134, 141].forEach(i => map[i] = 2);
+  // 2=sky, 25=cloud (actually water), 82=lamp, 85=light, 134=chandelier, 141=sconce
 
-  // MID_STRUCTURE (4) — buildings, structures, vehicles
-  'building': 4, 'house': 4, 'tower': 4, 'skyscraper': 4, 'church': 4,
-  'castle': 4, 'temple': 4, 'barn': 4, 'garage': 4, 'tent': 4,
-  'car': 4, 'bus': 4, 'truck': 4, 'train': 4, 'boat': 4, 'ship': 4,
-  'airplane': 4, 'bicycle': 4, 'motorcycle': 4, 'vehicle': 4,
-  'fence': 4, 'gate': 4, 'railing': 4, 'pole': 4, 'column': 4,
-  'arch': 4, 'dome': 4, 'roof': 4, 'stairway': 4, 'escalator': 4,
-  'furniture': 4, 'chair': 4, 'table': 4, 'bed': 4, 'sofa': 4,
-  'desk': 4, 'cabinet': 4, 'shelf': 4, 'counter': 4, 'bench': 4,
-  'door': 4, 'window': 4, 'screen': 4, 'monitor': 4, 'television': 4,
+  // BEAT_GROUND (3): ground, water, terrain, roads
+  [3, 6, 11, 13, 16, 21, 26, 34, 46, 52, 60, 61, 91, 128].forEach(i => map[i] = 3);
+  // 3=floor, 6=road, 11=sidewalk, 13=earth, 16=mountain, 21=water, 26=sea
+  // 34=path, 46=sand, 52=stairs, 60=bridge, 61=bench, 91=dirt, 128=lake
 
-  // LOW_AMBIENT (5) — walls, ceilings, misc background
-  'wall': 5, 'ceiling': 5, 'curtain': 5, 'blanket': 5, 'pillow': 5,
-  'cloth': 5, 'towel': 5, 'banner': 5, 'flag': 5, 'painting': 5,
-  'mirror': 5, 'poster': 5, 'board': 5, 'sign': 5, 'book': 5,
-  'box': 5, 'bag': 5, 'bottle': 5, 'cup': 5, 'plate': 5,
-  'food': 5, 'fruit': 5, 'cake': 5, 'bowl': 5, 'vase': 5,
-};
+  // MID_STRUCTURE (4): buildings, furniture, vehicles
+  [1, 7, 10, 14, 15, 18, 19, 23, 24, 25, 30, 31, 33, 35, 36, 37, 39, 40,
+   42, 43, 44, 45, 47, 57, 62, 63, 64, 67, 68, 69, 70, 76, 79, 80, 83,
+   84, 86, 87, 90, 93, 99, 100, 102, 103, 104, 116, 117, 118, 119, 120,
+   122, 127, 130, 136, 137, 138, 139, 140, 145, 146, 148, 149].forEach(i => map[i] = 4);
+  // 1=building, 7=car, 10=fence, 14=door, 15=table, etc.
 
-/** Fuzzy match an ADE20K label to our audio category */
-function labelToCategory(label: string): number {
-  const lower = label.toLowerCase().trim();
+  // LOW_AMBIENT (5): walls, ceiling, misc (default, already set)
+  [0, 5, 8, 22, 27, 28, 32, 38, 41, 48, 49, 50, 51, 53, 54, 55, 56, 58,
+   59, 65, 71, 74, 77, 78, 81, 88, 89, 92, 94, 95, 96, 97, 98, 101, 105,
+   106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 121, 123, 124, 125,
+   129, 131, 133, 135, 142, 143, 144].forEach(i => map[i] = 5);
+  // 0=wall, 5=ceiling, 8=windowpane, etc.
 
-  // Exact match first
-  if (lower in ADE20K_TO_CATEGORY) return ADE20K_TO_CATEGORY[lower];
+  return map;
+})();
 
-  // Substring match — check if any known keyword is contained in the label
-  for (const [keyword, cat] of Object.entries(ADE20K_TO_CATEGORY)) {
-    if (lower.includes(keyword) || keyword.includes(lower)) return cat;
-  }
-
-  // Default: ambient background
-  return 5;
-}
+// ADE20K class names for display
+const ADE20K_NAMES: string[] = [
+  'wall','building','sky','floor','tree','ceiling','road','bed','windowpane',
+  'grass','cabinet','sidewalk','person','earth','door','table','mountain',
+  'plant','curtain','chair','car','water','painting','sofa','shelf',
+  'house','sea','mirror','rug','field','armchair','seat','fence','desk',
+  'rock','wardrobe','lamp','bathtub','railing','cushion','base','box',
+  'column','signboard','chest','counter','sand','sink','skyscraper','fireplace',
+  'refrigerator','grandstand','path','stairs','runway','case','pool table',
+  'pillow','screen door','stairway','river','bridge','bookcase','blind',
+  'coffee table','toilet','flower','book','hill','bench','countertop',
+  'stove','palm','kitchen island','computer','swivel chair','boat','bar',
+  'arcade machine','hovel','bus','towel','light','truck','tower','chandelier',
+  'awning','streetlight','booth','television','airplane','dirt path',
+  'apparel','pole','land','bannister','escalator','ottoman','bottle',
+  'buffet','poster','stage','van','ship','fountain','conveyor belt','canopy',
+  'washer','plaything','swimming pool','stool','barrel','basket','waterfall',
+  'tent','bag','minibike','cradle','oven','ball','food','step','tank',
+  'trade name','microwave','pot','animal','bicycle','lake','dishwasher',
+  'screen','blanket','sculpture','hood','sconce','vase','traffic light',
+  'tray','trash can','fan','pier','crt screen','plate','monitor',
+  'bulletin board','shower','radiator','glass','clock','flag',
+];
 
 export interface SegmentResult {
   segments: Uint8Array;   // per-pixel audio category (0-5)
   count: number;          // always CATEGORY_COUNT (6)
-  labels: string[];       // debug: what labels were found
+  labels: string[];       // what was detected: "tree→cat1(5000px)"
 }
 
-/**
- * Estimate per-pixel audio categories from an image.
- * Tries SegFormer-B0 semantic segmentation, falls back to depth-based zones.
- */
 export async function estimateSegments(
   imageUrl: string,
   width: number,
@@ -103,79 +104,87 @@ export async function estimateSegments(
   onStatus?: (msg: string) => void,
   depthMap?: Float32Array,
 ): Promise<SegmentResult> {
-  if (!pipelineFailed) {
+  if (!modelFailed) {
     try {
-      if (!segPipeline) {
-        onStatus?.('Loading segmentation model (~15MB)...');
-        segPipeline = await pipeline(
-          'image-segmentation',
+      if (!segModel || !segProcessor) {
+        onStatus?.('Loading segmentation model...');
+        segProcessor = await AutoProcessor.from_pretrained(
+          'Xenova/segformer-b0-finetuned-ade-512-512',
+        );
+        segModel = await SegformerForSemanticSegmentation.from_pretrained(
           'Xenova/segformer-b0-finetuned-ade-512-512',
           { quantized: true },
         );
       }
 
       onStatus?.('Segmenting scene...');
-      const results = await segPipeline(imageUrl, { subtask: 'semantic' });
-      const outputs = Array.isArray(results) ? results : [results];
 
-      if (outputs.length === 0) throw new Error('No segments returned');
+      // Load image
+      const img = await RawImage.fromURL(imageUrl);
 
-      // Get mask dimensions from first output
-      const maskW = outputs[0].mask.width as number;
-      const maskH = outputs[0].mask.height as number;
+      // Run model
+      const inputs = await segProcessor(img);
+      const output = await segModel(inputs);
 
-      // Build per-pixel category map at mask resolution
-      // Each output is { label: string, mask: RawImage }
-      // We assign categories based on the label, largest area wins ties
-      const categoryMap = new Uint8Array(maskW * maskH);
-      categoryMap.fill(5); // default: ambient
+      // output.logits: [1, 150, H, W] — take argmax across class dim
+      const logits = output.logits;
+      const [, numClasses, outH, outW] = logits.dims;
+      const logitData = logits.data as Float32Array;
 
-      // Sort by area ascending so larger segments overwrite smaller
-      const sorted = outputs
-        .map(o => {
-          const data = o.mask.data as Uint8ClampedArray;
-          const channels = (o.mask.channels as number) || 1;
-          let area = 0;
-          for (let j = 0; j < maskW * maskH; j++) {
-            if (data[j * channels] > 128) area++;
+      // Argmax per pixel at model resolution
+      const classMap = new Uint8Array(outH * outW);
+      for (let y = 0; y < outH; y++) {
+        for (let x = 0; x < outW; x++) {
+          let maxVal = -Infinity;
+          let maxIdx = 0;
+          for (let c = 0; c < numClasses; c++) {
+            const val = logitData[c * outH * outW + y * outW + x];
+            if (val > maxVal) {
+              maxVal = val;
+              maxIdx = c;
+            }
           }
-          return { label: o.label as string, mask: o.mask, area, channels, category: labelToCategory(o.label as string) };
-        })
-        .sort((a, b) => a.area - b.area); // ascending — bigger overwrites
-
-      const foundLabels: string[] = [];
-      for (const seg of sorted) {
-        foundLabels.push(`${seg.label}→cat${seg.category}(${seg.area}px)`);
-        const data = seg.mask.data as Uint8ClampedArray;
-        for (let j = 0; j < maskW * maskH; j++) {
-          if (data[j * seg.channels] > 128) {
-            categoryMap[j] = seg.category;
-          }
+          classMap[y * outW + x] = maxIdx;
         }
       }
 
-      // Resize to target dimensions (nearest-neighbor)
+      // Count pixels per class for labels
+      const classCounts = new Map<number, number>();
+      for (let i = 0; i < classMap.length; i++) {
+        classCounts.set(classMap[i], (classCounts.get(classMap[i]) || 0) + 1);
+      }
+
+      // Map classes to audio categories and resize to target dimensions
       const segments = new Uint8Array(width * height);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          const sx = Math.min(Math.floor((x / width) * maskW), maskW - 1);
-          const sy = Math.min(Math.floor((y / height) * maskH), maskH - 1);
-          segments[y * width + x] = categoryMap[sy * maskW + sx];
+          const sx = Math.min(Math.floor((x / width) * outW), outW - 1);
+          const sy = Math.min(Math.floor((y / height) * outH), outH - 1);
+          const classIdx = classMap[sy * outW + sx];
+          segments[y * width + x] = ADE20K_CLASS_TO_CATEGORY[classIdx] ?? 5;
         }
       }
 
-      console.log(`[segment] ML: ${outputs.length} classes → 6 audio categories`);
-      console.log(`[segment] Labels: ${foundLabels.join(', ')}`);
-      return { segments, count: CATEGORY_COUNT, labels: foundLabels };
+      // Build labels for display
+      const labels: string[] = [];
+      const sorted = [...classCounts.entries()].sort((a, b) => b[1] - a[1]);
+      for (const [classIdx, count] of sorted) {
+        if (count < 50) continue; // skip tiny regions
+        const name = ADE20K_NAMES[classIdx] || `class${classIdx}`;
+        const cat = ADE20K_CLASS_TO_CATEGORY[classIdx] ?? 5;
+        const pct = ((count / classMap.length) * 100).toFixed(0);
+        labels.push(`${name}→cat${cat}(${pct}%)`);
+      }
+
+      console.log(`[segment] ML: ${classCounts.size} classes detected`);
+      console.log(`[segment] Labels: ${labels.join(', ')}`);
+      return { segments, count: CATEGORY_COUNT, labels };
 
     } catch (e) {
       const errMsg = (e as Error).message || String(e);
-      const errStack = (e as Error).stack?.slice(0, 200) || '';
-      console.error('Segmentation failed:', errMsg, errStack);
-      pipelineFailed = true;
-      // Show full error so user can report it
+      console.error('[segment] ML failed:', errMsg);
+      modelFailed = true;
       onStatus?.(`Seg failed: ${errMsg.slice(0, 80)}`);
-      // Brief delay so user sees the error
       await new Promise(r => setTimeout(r, 2000));
     }
   }
@@ -191,20 +200,18 @@ function depthFallback(
   const segments = new Uint8Array(width * height);
 
   if (depthMap && depthMap.length === width * height) {
-    // Map depth to categories: close=BASS_SUBJECT, mid=MID_ORGANIC, far=HIGH_SKY
     for (let i = 0; i < depthMap.length; i++) {
-      const d = depthMap[i]; // 0=far, 1=close
-      if (d > 0.7) segments[i] = 0;      // close → bass subject
-      else if (d > 0.5) segments[i] = 1;  // mid-close → organic
-      else if (d > 0.3) segments[i] = 4;  // mid → structure
-      else if (d > 0.15) segments[i] = 3; // mid-far → ground
-      else segments[i] = 2;               // far → sky
+      const d = depthMap[i];
+      if (d > 0.7) segments[i] = 0;
+      else if (d > 0.5) segments[i] = 1;
+      else if (d > 0.3) segments[i] = 4;
+      else if (d > 0.15) segments[i] = 3;
+      else segments[i] = 2;
     }
   } else {
     segments.fill(5);
   }
 
-  console.log(`[segment] Depth fallback: 6 categories`);
   return {
     segments,
     count: CATEGORY_COUNT,
