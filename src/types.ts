@@ -6,6 +6,14 @@ export interface AudioUniforms {
   u_mid: number;
   u_high: number;
   u_beat: number;
+  u_band0: number;
+  u_band1: number;
+  u_band2: number;
+  u_band3: number;
+  u_band4: number;
+  u_band5: number;
+  u_band6: number;
+  u_band7: number;
   u_intensity: number;
   u_resolution: [number, number];
 }

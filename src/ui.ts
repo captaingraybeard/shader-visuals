@@ -14,6 +14,7 @@ export class UI {
   onMusicFile: ((file: File) => void) | null = null;
   onApiKeyChange: ((key: string) => void) | null = null;
   onCameraReset: (() => void) | null = null;
+  onFormChange: ((value: number) => void) | null = null;
 
   private overlay!: HTMLElement;
   private toastEl!: HTMLElement;
@@ -126,6 +127,36 @@ export class UI {
     coherenceGroup.appendChild(coherenceHeader);
     coherenceGroup.appendChild(this.coherenceSlider);
 
+    // Form slider (0=grid/lines, 1=scattered points)
+    const formGroup = el('div', 'sv-slider-group');
+    const formHeader = el('div', 'sv-slider-header');
+    const formTitle = el('span', 'sv-slider-title');
+    formTitle.textContent = 'Form';
+    const formLabel = el('span', 'sv-slider-value');
+    formLabel.textContent = '0%';
+    formHeader.appendChild(formTitle);
+    formHeader.appendChild(formLabel);
+
+    const formSlider = el('input', 'sv-slider') as HTMLInputElement;
+    formSlider.type = 'range';
+    formSlider.min = '0';
+    formSlider.max = '100';
+    formSlider.value = '0';
+    const savedForm = localStorage.getItem('shader-visuals-form');
+    if (savedForm !== null) {
+      formSlider.value = String(Math.round(parseFloat(savedForm) * 100));
+      formLabel.textContent = `${formSlider.value}%`;
+    }
+    formSlider.addEventListener('input', () => {
+      const v = parseInt(formSlider.value, 10);
+      formLabel.textContent = `${v}%`;
+      this.onFormChange?.(v / 100);
+      this.resetAutoHide();
+    });
+
+    formGroup.appendChild(formHeader);
+    formGroup.appendChild(formSlider);
+
     // Bottom toolbar: mic + settings
     const toolbar = el('div', 'sv-toolbar');
 
@@ -225,6 +256,7 @@ export class UI {
     this.panel.appendChild(presetRow);
     this.panel.appendChild(sliderGroup);
     this.panel.appendChild(coherenceGroup);
+    this.panel.appendChild(formGroup);
     this.panel.appendChild(toolbar);
 
     this.overlay.appendChild(this.panel);

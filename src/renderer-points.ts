@@ -1,4 +1,4 @@
-// WebGL2 point cloud renderer with audio-reactive displacement
+// WebGL2 point cloud renderer with per-segment audio-reactive displacement
 
 import type { PointCloudData } from './pointcloud';
 
@@ -7,6 +7,7 @@ precision highp float;
 
 in vec3 a_position;
 in vec3 a_color;
+in float a_segment;
 
 uniform mat4 u_projection;
 uniform mat4 u_view;
@@ -15,91 +16,135 @@ uniform float u_bass;
 uniform float u_mid;
 uniform float u_high;
 uniform float u_beat;
-uniform float u_coherence;  // 1.0 = solid, 0.0 = chaos
+uniform float u_band0;
+uniform float u_band1;
+uniform float u_band2;
+uniform float u_band3;
+uniform float u_band4;
+uniform float u_band5;
+uniform float u_band6;
+uniform float u_band7;
+uniform float u_coherence;
 uniform float u_pointScale;
-uniform float u_transition; // 0-1 crossfade between old and new cloud
+uniform float u_transition;
+uniform float u_form;
 
 out vec3 v_color;
 out float v_alpha;
 out float v_coherence;
 
-// Simple hash for per-point randomness
 float hash(float n) {
   return fract(sin(n * 127.1) * 43758.5453);
 }
 
+// GLSL ES doesn't support array indexing by variable — use if/else chain
+float getBand(int idx) {
+  if (idx <= 0) return u_band0;
+  else if (idx == 1) return u_band1;
+  else if (idx == 2) return u_band2;
+  else if (idx == 3) return u_band3;
+  else if (idx == 4) return u_band4;
+  else if (idx == 5) return u_band5;
+  else if (idx == 6) return u_band6;
+  else return u_band7;
+}
+
 void main() {
   float idx = float(gl_VertexID);
-
-  // Original position
   vec3 pos = a_position;
 
-  // Points are in spherical coords — distance from origin indicates depth
-  // Close objects: r ~1.5 (5.0 - 3.5*1.0), Far objects: r ~5.0
+  // Depth: distance from origin. Close=small r (~0.5), Far=large r (~10)
   float dist = length(a_position);
-  float depthFactor = 1.0 - clamp((dist - 1.5) / 3.5, 0.0, 1.0);
+  float depthFactor = 1.0 - clamp((dist - 0.5) / 9.5, 0.0, 1.0); // 1=close, 0=far
 
-  // ── Coherence displacement ──
-  // Low coherence → scatter points using noise
-  float chaos = 1.0 - u_coherence;
-
-  // Foreground resists displacement more
-  // At coherence=0.5: far points are fully chaotic, close points barely move
-  float localChaos = chaos * (1.0 - depthFactor * u_coherence);
-
-  // Per-point random seed
+  // Per-point random seeds
   float h1 = hash(idx);
   float h2 = hash(idx + 1000.0);
   float h3 = hash(idx + 2000.0);
 
-  // Noise-based displacement scaled by localChaos instead of global chaos
-  float t = u_time * 0.5;
-  vec3 scatter = vec3(
-    sin(idx * 0.017 + t * (0.5 + h1)) * h1,
-    cos(idx * 0.013 + t * (0.4 + h2)) * h2,
-    sin(idx * 0.011 + t * (0.6 + h3)) * h3
-  ) * localChaos * 2.0;
+  // ── Segment → resonant frequency band ──
+  // a_segment is 0-1, maps across 8 bands
+  float bandIndex = a_segment * 7.0;
+  float lo = floor(bandIndex);
+  float hi = min(lo + 1.0, 7.0);
+  float frac = bandIndex - lo;
+  float resonance = mix(getBand(int(lo)), getBand(int(hi)), frac);
 
+  // Per-segment phase offset so animations don't sync
+  float segPhase = a_segment * 6.2831853; // 0-2π
+
+  // ── Form jitter: break grid pattern ──
+  pos += vec3(
+    (hash(idx * 3.7) - 0.5) * u_form * 0.08,
+    (hash(idx * 7.3) - 0.5) * u_form * 0.08,
+    (hash(idx * 11.1) - 0.5) * u_form * 0.08
+  );
+
+  // ── SPATIAL COHERENCE ──
+  float depthProtection = depthFactor * 0.4;
+  float localCoherence = clamp(u_coherence + depthProtection * (1.0 - u_coherence), 0.0, 1.0);
+  float localChaos = 1.0 - localCoherence;
+
+  // Scatter displacement — segments whose band is active get extra scatter
+  float t = u_time * 0.5;
+  float scatterBoost = 1.0 + resonance * 0.5 * localChaos;
+  vec3 scatter = vec3(
+    sin(idx * 0.017 + t * (0.5 + h1) + segPhase) * h1,
+    cos(idx * 0.013 + t * (0.4 + h2) + segPhase) * h2,
+    sin(idx * 0.011 + t * (0.6 + h3) + segPhase) * h3
+  ) * localChaos * 2.5 * scatterBoost;
   pos += scatter;
 
-  // ── Audio modulation ──
-  // Bass pushes points outward — foreground holds position, background explodes
+  // ── Per-segment displacement (breathing with resonant band) ──
   vec3 dir = normalize(pos + vec3(0.001));
-  pos += dir * u_bass * 0.15 * (1.0 - depthFactor * 0.7);
+  pos += dir * resonance * 0.2;
 
-  // Beat snap — background pushed more, foreground less
-  float beatPush = u_beat * (1.0 - depthFactor * 0.8);
-  pos *= 1.0 + beatPush * 0.2;
+  // ── AUDIO: Bass → global breathing (kept for all points) ──
+  pos += dir * u_bass * 0.08 * (0.3 + (1.0 - depthFactor) * 0.7);
 
-  // Mid frequency: gentle wave displacement
-  pos.y += sin(pos.x * 4.0 + u_time * 2.0) * u_mid * 0.05;
+  // ── AUDIO: Beat → ripple wave through scene ──
+  float ripplePhase = dist - u_time * 4.0 + segPhase * 0.5;
+  float ripple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
+  pos += dir * ripple * u_beat * 0.25 * (0.4 + (1.0 - depthFactor) * 0.6);
+
+  // ── AUDIO: Mid → organic wave movement ──
+  float midWave = (1.0 - depthFactor * 0.5);
+  pos.y += sin(pos.x * 3.0 + u_time * 1.5 + segPhase) * u_mid * 0.06 * midWave;
+  pos.x += cos(pos.y * 2.5 + u_time * 1.2 + segPhase) * u_mid * 0.04 * midWave;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
-  // ── Point size: coherence boost + depth perspective ──
+  // ── Point size ──
   float baseSize = u_pointScale;
-  // Aggressive coherence scaling — at 1.0 points overlap to fill the scene
-  float coherenceBoost = u_coherence * u_coherence * u_coherence * 24.0;
-  float audioPtSize = u_bass * 3.0 + u_beat * 4.0;
-  float ptSize = baseSize + coherenceBoost + audioPtSize;
+  float coherenceBoost = localCoherence * localCoherence * 6.0;
+  float ptSize = baseSize + coherenceBoost;
+  // Resonance pulses point size
+  ptSize += resonance * 3.0;
+  // Bass gently swells point size
+  ptSize += u_bass * 1.0;
+  // Closer points bigger
+  ptSize *= (0.4 + depthFactor * 1.2);
+  gl_PointSize = max(1.0, ptSize);
 
-  // Closer points are bigger (perspective)
-  ptSize *= (0.5 + depthFactor * 1.0);
+  // ── Color ──
+  v_color = a_color * 1.4 + vec3(0.08);
 
-  // Minimum size so scattered points remain visible
-  gl_PointSize = max(1.5, ptSize);
+  // Segment glow: segments glow brighter when their band is active
+  v_color += v_color * resonance * 0.35;
 
-  // Boost color brightness — raw image colors are too dark as points
-  v_color = a_color * 1.5 + vec3(0.1);
+  // High frequencies → sparkle/shimmer
+  float shimmer = sin(idx * 0.1 + u_time * 8.0 + segPhase) * 0.5 + 0.5;
+  v_color += vec3(u_high * 0.3 * h1 * shimmer, u_high * 0.2 * h2 * shimmer, u_high * 0.35 * h3 * shimmer);
 
-  // High frequencies add brightness shimmer
-  v_color += vec3(u_high * 0.2 * h1, u_high * 0.15 * h2, u_high * 0.25 * h3);
+  // Mid → warm hue shift
+  v_color.r += u_mid * 0.08;
+  v_color.b -= u_mid * 0.04;
 
-  // Beat flash
-  v_color += vec3(0.2, 0.1, 0.25) * u_beat;
+  // Beat → brief bright pulse
+  v_color += vec3(0.15, 0.08, 0.18) * u_beat * (0.5 + depthFactor * 0.5);
 
   v_alpha = u_transition;
-  v_coherence = u_coherence;
+  v_coherence = localCoherence;
 }
 `;
 
@@ -113,16 +158,20 @@ in float v_coherence;
 out vec4 fragColor;
 
 void main() {
-  // Soft circle at low coherence, squarish at high coherence
   float dist = length(gl_PointCoord - 0.5);
-  float shapeThreshold = mix(0.5, 0.7, v_coherence); // circle → square-ish
-  if (dist > shapeThreshold) discard;
 
-  // Softer edge at low coherence, solid fill at high coherence
-  float edgeStart = mix(0.3, 0.6, v_coherence);
-  float edge = 1.0 - smoothstep(edgeStart, shapeThreshold, dist);
-
-  fragColor = vec4(v_color * edge, v_alpha * edge);
+  // High coherence: square points (no discard) for seamless tiling
+  // Low coherence: circular points with soft edges for particle look
+  if (v_coherence < 0.7) {
+    float shapeThreshold = mix(0.45, 0.7, v_coherence / 0.7);
+    if (dist > shapeThreshold) discard;
+    float edgeStart = shapeThreshold - 0.15;
+    float edge = 1.0 - smoothstep(edgeStart, shapeThreshold, dist);
+    fragColor = vec4(v_color * edge, v_alpha * edge);
+  } else {
+    // Full square, no discard — tiles perfectly
+    fragColor = vec4(v_color, v_alpha);
+  }
 }
 `;
 
@@ -132,12 +181,14 @@ export class PointCloudRenderer {
   private vao: WebGLVertexArrayObject | null = null;
   private posBuf: WebGLBuffer | null = null;
   private colBuf: WebGLBuffer | null = null;
+  private segBuf: WebGLBuffer | null = null;
   private pointCount = 0;
 
   // Previous cloud for crossfade
   private prevVao: WebGLVertexArrayObject | null = null;
   private prevPosBuf: WebGLBuffer | null = null;
   private prevColBuf: WebGLBuffer | null = null;
+  private prevSegBuf: WebGLBuffer | null = null;
   private prevCount = 0;
   private crossfading = false;
   private crossfadeStart = 0;
@@ -200,7 +251,9 @@ export class PointCloudRenderer {
 
     const names = [
       'u_projection', 'u_view', 'u_time', 'u_bass', 'u_mid',
-      'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition',
+      'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition', 'u_form',
+      'u_band0', 'u_band1', 'u_band2', 'u_band3',
+      'u_band4', 'u_band5', 'u_band6', 'u_band7',
     ];
     for (const n of names) {
       this.uniforms[n] = gl.getUniformLocation(prog, n);
@@ -218,6 +271,7 @@ export class PointCloudRenderer {
       this.prevVao = this.vao;
       this.prevPosBuf = this.posBuf;
       this.prevColBuf = this.colBuf;
+      this.prevSegBuf = this.segBuf;
       this.prevCount = this.pointCount;
       this.crossfading = true;
       this.crossfadeStart = performance.now();
@@ -243,6 +297,14 @@ export class PointCloudRenderer {
     gl.enableVertexAttribArray(colLoc);
     gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, 0, 0);
 
+    // Segment buffer — attribute 2
+    this.segBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.segBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, data.segments, gl.STATIC_DRAW);
+    const segLoc = gl.getAttribLocation(this.program, 'a_segment');
+    gl.enableVertexAttribArray(segLoc);
+    gl.vertexAttribPointer(segLoc, 1, gl.FLOAT, false, 0, 0);
+
     gl.bindVertexArray(null);
     this.pointCount = data.count;
   }
@@ -259,8 +321,17 @@ export class PointCloudRenderer {
     mid: number;
     high: number;
     beat: number;
+    band0: number;
+    band1: number;
+    band2: number;
+    band3: number;
+    band4: number;
+    band5: number;
+    band6: number;
+    band7: number;
     coherence: number;
     pointScale: number;
+    form: number;
   }): void {
     const gl = this.gl;
     if (!gl || !this.program) return;
@@ -280,8 +351,17 @@ export class PointCloudRenderer {
     if (u.u_mid) gl.uniform1f(u.u_mid, opts.mid);
     if (u.u_high) gl.uniform1f(u.u_high, opts.high);
     if (u.u_beat) gl.uniform1f(u.u_beat, opts.beat);
+    if (u.u_band0) gl.uniform1f(u.u_band0, opts.band0);
+    if (u.u_band1) gl.uniform1f(u.u_band1, opts.band1);
+    if (u.u_band2) gl.uniform1f(u.u_band2, opts.band2);
+    if (u.u_band3) gl.uniform1f(u.u_band3, opts.band3);
+    if (u.u_band4) gl.uniform1f(u.u_band4, opts.band4);
+    if (u.u_band5) gl.uniform1f(u.u_band5, opts.band5);
+    if (u.u_band6) gl.uniform1f(u.u_band6, opts.band6);
+    if (u.u_band7) gl.uniform1f(u.u_band7, opts.band7);
     if (u.u_coherence) gl.uniform1f(u.u_coherence, opts.coherence);
     if (u.u_pointScale) gl.uniform1f(u.u_pointScale, opts.pointScale);
+    if (u.u_form) gl.uniform1f(u.u_form, opts.form);
 
     // Crossfade logic
     let crossT = 1.0;
@@ -345,6 +425,7 @@ export class PointCloudRenderer {
     if (this.prevVao) { gl.deleteVertexArray(this.prevVao); this.prevVao = null; }
     if (this.prevPosBuf) { gl.deleteBuffer(this.prevPosBuf); this.prevPosBuf = null; }
     if (this.prevColBuf) { gl.deleteBuffer(this.prevColBuf); this.prevColBuf = null; }
+    if (this.prevSegBuf) { gl.deleteBuffer(this.prevSegBuf); this.prevSegBuf = null; }
     this.prevCount = 0;
   }
 }

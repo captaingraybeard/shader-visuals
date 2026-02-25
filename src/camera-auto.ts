@@ -83,10 +83,11 @@ export class AutoCamera {
     this.theta += (this.targetTheta - this.theta) * lerpRate;
     this.phi += (this.targetPhi - this.phi) * lerpRate;
 
-    // Gentle position drift (small movements inside the cylinder)
-    this.posX = Math.sin(this.phase * 0.08) * 0.3;
-    this.posY = Math.sin(this.phase * 0.06) * 0.15;
-    this.posZ = Math.cos(this.phase * 0.1) * 0.2;
+    // Position drift inside the sphere — enough to create real parallax
+    const driftScale = 0.8 + bass * 0.3;
+    this.posX = Math.sin(this.phase * 0.08) * driftScale;
+    this.posY = Math.sin(this.phase * 0.06) * 0.4;
+    this.posZ = Math.cos(this.phase * 0.1) * driftScale;
 
     // Bass camera shake
     const shakeAmount = bass * 0.01 + beat * 0.02;
@@ -110,7 +111,7 @@ export class AutoCamera {
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
-    return perspective(Math.PI / 4, aspect, 0.01, 100);
+    return perspective(Math.PI / 3, aspect, 0.01, 100);
   }
 }
 

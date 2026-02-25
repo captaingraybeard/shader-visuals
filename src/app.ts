@@ -1,4 +1,5 @@
 import { AudioEngine } from './audio';
+import type { AudioData } from './audio';
 import { Renderer } from './renderer';
 import { PointCloudRenderer } from './renderer-points';
 import { AutoCamera } from './camera-auto';
@@ -7,6 +8,7 @@ import { DMTOverlay } from './dmt';
 import { UI } from './ui';
 import { generateImage } from './imagegen';
 import { estimateDepth } from './depth';
+import { estimateSegments } from './segment';
 import { buildPointCloud } from './pointcloud';
 import { presets } from './presets';
 import defaultShader from '../shaders/default.frag?raw';
@@ -25,6 +27,7 @@ export class App {
 
   private intensity = 0.5;
   private coherence = 0.8;
+  private form = 0;  // 0=grid/lines, 1=scattered points
   private mode: RenderMode = 'shader';
   private startTime = 0;
   private running = false;
@@ -64,6 +67,8 @@ export class App {
     if (savedIntensity !== null) this.intensity = parseFloat(savedIntensity);
     const savedCoherence = localStorage.getItem('shader-visuals-coherence');
     if (savedCoherence !== null) this.coherence = parseFloat(savedCoherence);
+    const savedForm = localStorage.getItem('shader-visuals-form');
+    if (savedForm !== null) this.form = parseFloat(savedForm);
 
     // Load first preset as initial shader (fallback mode)
     if (presets.length > 0) {
@@ -153,10 +158,28 @@ export class App {
           (msg) => this.ui.setLoading(true, msg),
         );
 
-        // Step 3: Build point cloud (primary scene representation)
+        // Step 3: Segment the scene
+        this.ui.setLoading(true, 'Segmenting scene...');
+        const { segments, count: segCount } = await estimateSegments(
+          imageDataUrl, w, h,
+          (msg) => this.ui.setLoading(true, msg),
+          depthMap,
+        );
+
+        // Step 4: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
-        const cloud = buildPointCloud(image, depthMap);
+        const cloud = buildPointCloud(image, depthMap, segments, segCount);
         this.pointRenderer.setPointCloud(cloud);
+
+        // Show depth stats as toast for debugging
+        let dMin = Infinity, dMax = -Infinity, dSum = 0;
+        for (let i = 0; i < depthMap.length; i++) {
+          if (depthMap[i] < dMin) dMin = depthMap[i];
+          if (depthMap[i] > dMax) dMax = depthMap[i];
+          dSum += depthMap[i];
+        }
+        const dMean = dSum / depthMap.length;
+        this.ui.showToast(`Depth: ${dMin.toFixed(2)}-${dMax.toFixed(2)} avg=${dMean.toFixed(2)} | ${(cloud.count/1000).toFixed(0)}K pts`, 8000);
 
         // Step 5: Set up autonomous camera with depth info
         this.camera.setDepthMap(depthMap, w, h);
@@ -223,6 +246,11 @@ export class App {
       localStorage.setItem('shader-visuals-api-key', key);
     };
 
+    this.ui.onFormChange = (value) => {
+      this.form = value;
+      localStorage.setItem('shader-visuals-form', String(value));
+    };
+
     this.ui.onCameraReset = () => {
       this.camera.reset();
     };
@@ -249,6 +277,14 @@ export class App {
         u_mid: audioData.u_mid,
         u_high: audioData.u_high,
         u_beat: audioData.u_beat,
+        u_band0: audioData.u_band0,
+        u_band1: audioData.u_band1,
+        u_band2: audioData.u_band2,
+        u_band3: audioData.u_band3,
+        u_band4: audioData.u_band4,
+        u_band5: audioData.u_band5,
+        u_band6: audioData.u_band6,
+        u_band7: audioData.u_band7,
         u_intensity: this.intensity,
         u_resolution: [window.innerWidth, window.innerHeight],
       };
@@ -261,7 +297,7 @@ export class App {
   private renderScene(
     time: number,
     dt: number,
-    audioData: { u_bass: number; u_mid: number; u_high: number; u_beat: number },
+    audioData: AudioData,
   ): void {
     const gl = this.sceneGL;
     const canvas = this.sceneCanvas;
@@ -278,9 +314,10 @@ export class App {
 
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
 
-    // Audio drives coherence: total energy pushes coherence DOWN from slider base
-    const audioEnergy = audioData.u_bass * 0.4 + audioData.u_mid * 0.2 + audioData.u_high * 0.1 + audioData.u_beat * 0.3;
-    const effectiveCoherence = Math.max(0, Math.min(1, this.coherence - audioEnergy * (1.0 - this.coherence * 0.3)));
+    // Audio drives coherence down — but the shader applies this spatially
+    // (foreground protected, background gets wrecked first)
+    const audioEnergy = audioData.u_bass * 0.35 + audioData.u_mid * 0.15 + audioData.u_high * 0.1 + audioData.u_beat * 0.4;
+    const effectiveCoherence = Math.max(0, Math.min(1, this.coherence - audioEnergy * 0.6));
 
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
@@ -298,7 +335,7 @@ export class App {
 
     // Point cloud — the entire scene
     if (this.pointRenderer.hasCloud) {
-      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 180) * dpr));
+      const pointScale = Math.max(1.5, Math.min(5, (canvas.clientWidth / 300) * dpr));
 
       this.pointRenderer.render({
         projection,
@@ -308,8 +345,17 @@ export class App {
         mid: audioData.u_mid,
         high: audioData.u_high,
         beat: audioData.u_beat,
+        band0: audioData.u_band0,
+        band1: audioData.u_band1,
+        band2: audioData.u_band2,
+        band3: audioData.u_band3,
+        band4: audioData.u_band4,
+        band5: audioData.u_band5,
+        band6: audioData.u_band6,
+        band7: audioData.u_band7,
         coherence: effectiveCoherence,
         pointScale,
+        form: this.form,
       });
     }
 
