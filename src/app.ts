@@ -240,6 +240,10 @@ export class App {
     this.ui.onApiKeyChange = (key) => {
       localStorage.setItem('shader-visuals-api-key', key);
     };
+
+    this.ui.onCameraReset = () => {
+      this.camera.reset();
+    };
   }
 
   // ── Render loop ───────────────────────────────────
@@ -285,8 +289,10 @@ export class App {
     this.meshRenderer.resize();
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
 
-    // Audio can momentarily push coherence down
-    const effectiveCoherence = Math.max(0, this.coherence - audioData.u_beat * 0.3);
+    // Audio drives coherence: total energy pushes coherence DOWN from the slider's base level
+    // Slider = base coherence, music = chaos factor
+    const audioEnergy = audioData.u_bass * 0.4 + audioData.u_mid * 0.2 + audioData.u_high * 0.1 + audioData.u_beat * 0.3;
+    const effectiveCoherence = Math.max(0, Math.min(1, this.coherence - audioEnergy * (1.0 - this.coherence * 0.3)));
 
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);

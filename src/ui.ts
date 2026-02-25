@@ -13,6 +13,7 @@ export class UI {
   onMicToggle: (() => void) | null = null;
   onMusicFile: ((file: File) => void) | null = null;
   onApiKeyChange: ((key: string) => void) | null = null;
+  onCameraReset: (() => void) | null = null;
 
   private overlay!: HTMLElement;
   private toastEl!: HTMLElement;
@@ -165,9 +166,19 @@ export class UI {
       this.resetAutoHide();
     });
 
+    // Camera reset button
+    const resetBtn = el('button', 'sv-btn sv-btn-icon') as HTMLButtonElement;
+    resetBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`;
+    resetBtn.title = 'Reset camera';
+    resetBtn.addEventListener('click', () => {
+      this.onCameraReset?.();
+      this.resetAutoHide();
+    });
+
     toolbar.appendChild(this.micBtn);
     toolbar.appendChild(this.musicBtn);
     toolbar.appendChild(this.fileInput);
+    toolbar.appendChild(resetBtn);
     toolbar.appendChild(this.settingsBtn);
 
     // Settings panel

@@ -1,34 +1,32 @@
-// Autonomous fly-through camera — no user input, audio-driven movement
-// Drifts forward, avoids surfaces using depth map, banks and turns smoothly
+// Autonomous camera — orbits and drifts around the scene, never leaves it
+// Audio-driven movement: bass = shake, beat = direction change, energy = speed
 
 export class AutoCamera {
-  // Camera state
-  private posX = 0;
-  private posY = 0;
-  private posZ = 2.5;
+  // Orbit state (spherical coords around origin)
+  private theta = 0;       // horizontal angle
+  private phi = 0.3;       // vertical angle (0 = front, +/- = up/down)
+  private radius = 2.8;    // distance from center
+  
+  // Target values for smooth lerp
+  private targetTheta = 0;
+  private targetPhi = 0.3;
+  private targetRadius = 2.8;
 
-  // Direction (yaw/pitch)
-  private yaw = 0;
-  private pitch = 0;
+  // Orbit speed
+  private orbitSpeed = 0.08;
+  
+  // Drift phase
+  private phase = 0;
+  private lastBeatTime = 0;
+  
+  // Shake
+  private shakeX = 0;
+  private shakeY = 0;
 
-  // Smooth velocity targets
-  private targetYaw = 0;
-  private targetPitch = 0;
-  private speed = 0.15;
-
-  // Depth map for obstacle avoidance
+  // Depth map (for future use)
   private depthMap: Float32Array | null = null;
   private depthW = 0;
   private depthH = 0;
-
-  // Time tracking
-  private driftPhase = 0;
-  private lastBeatTime = 0;
-  private turnTimer = 0;
-
-  // Shake state
-  private shakeX = 0;
-  private shakeY = 0;
 
   setDepthMap(depth: Float32Array, w: number, h: number): void {
     this.depthMap = depth;
@@ -37,137 +35,74 @@ export class AutoCamera {
   }
 
   resetForNewScene(): void {
-    // Smoothly transition to face new content
-    this.posX = 0;
-    this.posY = 0;
-    this.posZ = 2.5;
-    this.yaw = 0;
-    this.pitch = 0;
-    this.targetYaw = 0;
-    this.targetPitch = 0;
+    this.theta = 0;
+    this.phi = 0.3;
+    this.radius = 2.8;
+    this.targetTheta = 0;
+    this.targetPhi = 0.3;
+    this.targetRadius = 2.8;
+    this.phase = 0;
+    this.shakeX = 0;
+    this.shakeY = 0;
   }
 
-  update(dt: number, bass: number, mid: number, high: number, beat: number): void {
-    // Clamp dt to avoid huge jumps
+  reset(): void {
+    this.resetForNewScene();
+  }
+
+  update(dt: number, bass: number, mid: number, _high: number, beat: number): void {
     dt = Math.min(dt, 0.05);
+    this.phase += dt;
 
-    this.driftPhase += dt;
-    this.turnTimer -= dt;
+    // Continuous slow orbit — always moving
+    const audioSpeedBoost = 1.0 + bass * 0.8 + mid * 0.4;
+    this.targetTheta += this.orbitSpeed * dt * audioSpeedBoost;
 
-    // Beat triggers direction change
-    if (beat > 0.5 && this.driftPhase - this.lastBeatTime > 0.3) {
-      this.lastBeatTime = this.driftPhase;
-      this.targetYaw += (Math.random() - 0.5) * 0.8;
-      this.targetPitch += (Math.random() - 0.5) * 0.3;
+    // Gentle vertical drift (sinusoidal)
+    this.targetPhi = 0.3 + Math.sin(this.phase * 0.15) * 0.25;
+
+    // Gentle radius breathing
+    this.targetRadius = 2.8 + Math.sin(this.phase * 0.2) * 0.4 + bass * 0.3;
+
+    // Beat triggers bigger direction changes
+    if (beat > 0.5 && this.phase - this.lastBeatTime > 0.4) {
+      this.lastBeatTime = this.phase;
+      // Reverse orbit direction or jump angle
+      this.orbitSpeed = -this.orbitSpeed + (Math.random() - 0.5) * 0.06;
+      // Keep minimum orbit speed
+      if (Math.abs(this.orbitSpeed) < 0.04) {
+        this.orbitSpeed = (this.orbitSpeed >= 0 ? 1 : -1) * 0.06;
+      }
+      this.targetPhi += (Math.random() - 0.5) * 0.3;
     }
 
-    // Gentle drift turns
-    if (this.turnTimer <= 0) {
-      this.turnTimer = 3 + Math.random() * 4;
-      this.targetYaw += (Math.random() - 0.5) * 0.5;
-      this.targetPitch += (Math.random() - 0.5) * 0.2;
-    }
+    // Clamp phi (don't go directly above/below)
+    this.targetPhi = Math.max(-0.5, Math.min(0.8, this.targetPhi));
+    
+    // Clamp radius (stay in scene)
+    this.targetRadius = Math.max(1.5, Math.min(4.0, this.targetRadius));
 
-    // Gentle sinusoidal drift
-    this.targetYaw += Math.sin(this.driftPhase * 0.2) * dt * 0.05;
-    this.targetPitch += Math.cos(this.driftPhase * 0.15) * dt * 0.03;
-
-    // Clamp pitch
-    this.targetPitch = Math.max(-0.4, Math.min(0.4, this.targetPitch));
-
-    // Smooth interpolation toward targets
-    const lerpRate = 1.5 * dt;
-    this.yaw += (this.targetYaw - this.yaw) * lerpRate;
-    this.pitch += (this.targetPitch - this.pitch) * lerpRate;
-
-    // Depth-based steering
-    if (this.depthMap) {
-      this.steerFromDepth();
-    }
-
-    // Audio-driven speed: bass and mid boost speed
-    const audioSpeed = this.speed * (1.0 + bass * 0.5 + mid * 0.3);
-
-    // Forward direction
-    const cosP = Math.cos(this.pitch);
-    const dx = Math.sin(this.yaw) * cosP;
-    const dy = Math.sin(this.pitch);
-    const dz = -Math.cos(this.yaw) * cosP;
-
-    // Move forward
-    this.posX += dx * audioSpeed * dt;
-    this.posY += dy * audioSpeed * dt;
-    this.posZ += dz * audioSpeed * dt;
-
-    // Gentle Y bob
-    this.posY += Math.sin(this.driftPhase * 0.4) * 0.002;
-
-    // Keep camera within reasonable bounds
-    this.posX = Math.max(-3, Math.min(3, this.posX));
-    this.posY = Math.max(-2, Math.min(2, this.posY));
-    // Cycle Z — when camera flies through, bring it back
-    if (this.posZ < -2) { this.posZ = 3; this.targetYaw = Math.PI; }
-    if (this.posZ > 4) { this.posZ = -1; this.targetYaw = 0; }
+    // Smooth interpolation
+    const lerpRate = 2.0 * dt;
+    this.theta += (this.targetTheta - this.theta) * lerpRate;
+    this.phi += (this.targetPhi - this.phi) * lerpRate;
+    this.radius += (this.targetRadius - this.radius) * lerpRate;
 
     // Bass camera shake
-    const shakeAmount = bass * 0.02 + beat * 0.03;
+    const shakeAmount = bass * 0.015 + beat * 0.025;
     this.shakeX = (Math.random() - 0.5) * shakeAmount;
     this.shakeY = (Math.random() - 0.5) * shakeAmount;
   }
 
-  private steerFromDepth(): void {
-    if (!this.depthMap) return;
-
-    // Sample depth in front of camera to detect obstacles
-    // Project camera direction to depth map UV
-    const u = (this.posX + 1) / 2;  // -1..1 → 0..1
-    const v = (-this.posY + 1) / 2; // flip Y
-
-    // Sample in look direction
-    const lookU = u + Math.sin(this.yaw) * 0.1;
-    const lookV = v - Math.sin(this.pitch) * 0.1;
-
-    const centerDepth = this.sampleDepth(lookU, lookV);
-    const leftDepth = this.sampleDepth(lookU - 0.15, lookV);
-    const rightDepth = this.sampleDepth(lookU + 0.15, lookV);
-    const upDepth = this.sampleDepth(lookU, lookV - 0.15);
-    const downDepth = this.sampleDepth(lookU, lookV + 0.15);
-
-    // Steer away from close surfaces (high depth = close)
-    if (centerDepth > 0.7) {
-      // Turn toward the side with more open space (lower depth)
-      if (leftDepth < rightDepth) {
-        this.targetYaw -= 0.02;
-      } else {
-        this.targetYaw += 0.02;
-      }
-      if (upDepth < downDepth) {
-        this.targetPitch += 0.01;
-      } else {
-        this.targetPitch -= 0.01;
-      }
-    }
-  }
-
-  private sampleDepth(u: number, v: number): number {
-    if (!this.depthMap) return 0;
-    const x = Math.floor(Math.max(0, Math.min(1, u)) * (this.depthW - 1));
-    const y = Math.floor(Math.max(0, Math.min(1, v)) * (this.depthH - 1));
-    return this.depthMap[y * this.depthW + x];
-  }
-
   getViewMatrix(): Float32Array {
-    const ex = this.posX + this.shakeX;
-    const ey = this.posY + this.shakeY;
-    const ez = this.posZ;
+    // Convert spherical to cartesian
+    const cosPhi = Math.cos(this.phi);
+    const ex = Math.sin(this.theta) * cosPhi * this.radius + this.shakeX;
+    const ey = Math.sin(this.phi) * this.radius + this.shakeY;
+    const ez = Math.cos(this.theta) * cosPhi * this.radius;
 
-    // Look-at target: position + forward direction
-    const cosP = Math.cos(this.pitch);
-    const tx = ex + Math.sin(this.yaw) * cosP;
-    const ty = ey + Math.sin(this.pitch);
-    const tz = ez - Math.cos(this.yaw) * cosP;
-
-    return lookAt(ex, ey, ez, tx, ty, tz, 0, 1, 0);
+    // Always look at center of scene
+    return lookAt(ex, ey, ez, 0, 0, 0, 0, 1, 0);
   }
 
   getProjectionMatrix(aspect: number): Float32Array {
