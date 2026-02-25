@@ -9,6 +9,7 @@ export class UI {
   onGenerate: ((scene: string, vibe: string) => void) | null = null;
   onPresetSelect: ((name: string) => void) | null = null;
   onIntensityChange: ((value: number) => void) | null = null;
+  onCoherenceChange: ((value: number) => void) | null = null;
   onMicToggle: (() => void) | null = null;
   onMusicFile: ((file: File) => void) | null = null;
   onApiKeyChange: ((key: string) => void) | null = null;
@@ -27,6 +28,8 @@ export class UI {
   private apiKeyInput!: HTMLInputElement;
   private intensitySlider!: HTMLInputElement;
   private intensityLabel!: HTMLElement;
+  private coherenceSlider!: HTMLInputElement;
+  private coherenceLabel!: HTMLElement;
 
   private hideTimer = 0;
   private visible = false;
@@ -97,6 +100,31 @@ export class UI {
     sliderGroup.appendChild(sliderHeader);
     sliderGroup.appendChild(this.intensitySlider);
 
+    // Coherence slider
+    const coherenceGroup = el('div', 'sv-slider-group');
+    const coherenceHeader = el('div', 'sv-slider-header');
+    const coherenceTitle = el('span', 'sv-slider-title');
+    coherenceTitle.textContent = 'Coherence';
+    this.coherenceLabel = el('span', 'sv-slider-value');
+    this.coherenceLabel.textContent = '80%';
+    coherenceHeader.appendChild(coherenceTitle);
+    coherenceHeader.appendChild(this.coherenceLabel);
+
+    this.coherenceSlider = el('input', 'sv-slider') as HTMLInputElement;
+    this.coherenceSlider.type = 'range';
+    this.coherenceSlider.min = '0';
+    this.coherenceSlider.max = '100';
+    this.coherenceSlider.value = '80';
+    this.coherenceSlider.addEventListener('input', () => {
+      const v = parseInt(this.coherenceSlider.value, 10);
+      this.coherenceLabel.textContent = `${v}%`;
+      this.onCoherenceChange?.(v / 100);
+      this.resetAutoHide();
+    });
+
+    coherenceGroup.appendChild(coherenceHeader);
+    coherenceGroup.appendChild(this.coherenceSlider);
+
     // Bottom toolbar: mic + settings
     const toolbar = el('div', 'sv-toolbar');
 
@@ -148,10 +176,10 @@ export class UI {
     settingsTitle.textContent = 'Settings';
     const apiKeyGroup = el('div', 'sv-apikey-group');
     const apiKeyLabel = el('label', 'sv-label');
-    apiKeyLabel.textContent = 'Anthropic API Key';
+    apiKeyLabel.textContent = 'OpenAI API Key';
     this.apiKeyInput = el('input', 'sv-input sv-input-key') as HTMLInputElement;
     this.apiKeyInput.type = 'password';
-    this.apiKeyInput.placeholder = 'sk-ant-...';
+    this.apiKeyInput.placeholder = 'sk-...';
     this.apiKeyInput.autocomplete = 'off';
 
     // Load stored key
@@ -176,6 +204,7 @@ export class UI {
     this.panel.appendChild(this.generateBtn);
     this.panel.appendChild(presetRow);
     this.panel.appendChild(sliderGroup);
+    this.panel.appendChild(coherenceGroup);
     this.panel.appendChild(toolbar);
 
     this.overlay.appendChild(this.panel);
@@ -223,10 +252,10 @@ export class UI {
     }, duration);
   }
 
-  setLoading(loading: boolean): void {
+  setLoading(loading: boolean, message?: string): void {
     if (loading) {
       this.generateBtn.disabled = true;
-      this.generateBtn.innerHTML = `${spinnerIcon} Generating...`;
+      this.generateBtn.innerHTML = `${spinnerIcon} ${message || 'Generating...'}`;
     } else {
       this.generateBtn.disabled = false;
       this.generateBtn.textContent = 'Generate';

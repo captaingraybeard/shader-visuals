@@ -29,9 +29,11 @@ export interface GenerateRequest {
 
 export interface AppState {
   intensity: number;
+  coherence: number;
   audioActive: boolean;
   apiKey: string;
   currentPreset: string | null;
+  mode: 'shader' | 'pointcloud';
 }
 
 export type ShaderSwapCallback = (source: string) => void;
