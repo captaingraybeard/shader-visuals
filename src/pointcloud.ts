@@ -95,16 +95,28 @@ export function buildPointCloud(
       const i = y * w + x;
       if (!selected[i]) continue;
 
-      // Normalize x,y to [-1, 1]
-      const nx = (x / w) * 2 - 1;
-      const ny = -((y / h) * 2 - 1); // flip Y so top is up
+      // Spherical projection matching the mesh cylinder
+      const u = x / w;
+      const v = y / h;
+      const depth = depthMap[i]; // 0=far, 1=close
 
-      // Depth: 0-1 mapped to z range [-1.0, 1.0] for more dramatic depth
-      const z = (depthMap[i] - 0.5) * 2.0;
+      // Same sphere params as renderer-mesh
+      const SPHERE_RADIUS = 5.0;
+      const DEPTH_PUSH = 3.5;
+      const ARC_H = Math.PI * 2;
+      const ARC_V = Math.PI * 0.85;
+      const ARC_H_OFFSET = -Math.PI;
+      const ARC_V_OFFSET = (Math.PI - ARC_V) / 2;
 
-      positions[idx * 3] = nx;
-      positions[idx * 3 + 1] = ny;
-      positions[idx * 3 + 2] = z;
+      const theta = ARC_H_OFFSET + u * ARC_H;
+      const phi = ARC_V_OFFSET + v * ARC_V;
+      const r = SPHERE_RADIUS - depth * DEPTH_PUSH;
+
+      const sinPhi = Math.sin(phi);
+      const cosPhi = Math.cos(phi);
+      positions[idx * 3]     = Math.sin(theta) * sinPhi * r;
+      positions[idx * 3 + 1] = cosPhi * r;
+      positions[idx * 3 + 2] = -Math.cos(theta) * sinPhi * r;
 
       // Color from image pixel
       const pixIdx = i * 4;

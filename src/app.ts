@@ -334,17 +334,30 @@ export class App {
       });
     }
 
-    // Draw point cloud when dissolving (overlaid on mesh)
-    if (showPoints && this.pointRenderer.hasCloud) {
-      // Point cloud renders with its own program — set alpha via coherence
+    // Always render point cloud (it's the scene's 3D representation)
+    if (this.pointRenderer.hasCloud) {
+      this.pointRenderer.resize();
       const dpr = window.devicePixelRatio || 1;
-      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 200) * dpr));
+      const pointScale = Math.max(4, Math.min(14, (canvas.clientWidth / 150) * dpr));
 
-      // We need to render points into the same FBO
-      // Point renderer uses its own GL context, so we render it separately
-      // For simplicity, integrate point cloud scatter via the mesh dissolve effect
-      // The mesh vertices scatter to become the point cloud at low coherence
-      // This is handled by the dissolve scatter in the mesh vertex shader
+      // Show point canvas overlaid
+      const ptCanvas = document.getElementById('canvas-points-hidden') as HTMLCanvasElement | null;
+      if (ptCanvas) {
+        ptCanvas.style.display = 'block';
+        ptCanvas.style.pointerEvents = 'none';
+      }
+
+      this.pointRenderer.render({
+        projection,
+        view,
+        time,
+        bass: audioData.u_bass,
+        mid: audioData.u_mid,
+        high: audioData.u_high,
+        beat: audioData.u_beat,
+        coherence: effectiveCoherence,
+        pointScale,
+      });
     }
 
     // DMT overlay (renders into the scene FBO)

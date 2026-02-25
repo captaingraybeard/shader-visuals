@@ -192,12 +192,13 @@ export function buildMeshData(
   const positions = new Float32Array(vertexCount * 3);
   const uvs = new Float32Array(vertexCount * 2);
 
-  // Cylinder parameters
-  const CYLINDER_RADIUS = 4.0;    // base radius of the cylinder
-  const DEPTH_PUSH = 2.5;         // how far depth pushes vertices inward
-  const HEIGHT = 3.0;             // half-height of cylinder
-  const ARC = Math.PI * 1.6;     // how much of the cylinder the image covers (~290°)
-  const ARC_OFFSET = -ARC / 2;    // center the image in front
+  // Sphere parameters — full 360° wrap
+  const SPHERE_RADIUS = 5.0;     // outer shell radius
+  const DEPTH_PUSH = 3.5;        // how far depth pushes vertices inward (close objects way closer)
+  const ARC_H = Math.PI * 2;     // full 360° horizontal
+  const ARC_V = Math.PI * 0.85;  // ~150° vertical (not full sphere bottom/top)
+  const ARC_H_OFFSET = -Math.PI; // start behind, wrap all the way around
+  const ARC_V_OFFSET = (Math.PI - ARC_V) / 2; // center vertically
 
   // Store depths for discontinuity detection
   const depthGrid = new Float32Array(vertexCount);
@@ -214,16 +215,19 @@ export function buildMeshData(
       const depth = depthMap[sy * srcW + sx]; // 0=far, 1=close
       depthGrid[vi] = depth;
 
-      // Angle around cylinder (horizontal)
-      const angle = ARC_OFFSET + u * ARC;
+      // Spherical coordinates
+      const theta = ARC_H_OFFSET + u * ARC_H;  // horizontal angle (full 360°)
+      const phi = ARC_V_OFFSET + v * ARC_V;     // vertical angle
 
-      // Radius: far things at cylinder wall, close things pushed inward
-      const r = CYLINDER_RADIUS - depth * DEPTH_PUSH;
+      // Radius: far things at sphere wall, close things pushed way inward
+      const r = SPHERE_RADIUS - depth * DEPTH_PUSH;
 
-      // Cylindrical coordinates → cartesian
-      positions[vi * 3]     = Math.sin(angle) * r;           // X
-      positions[vi * 3 + 1] = HEIGHT * (1 - 2 * v);          // Y (top to bottom)
-      positions[vi * 3 + 2] = -Math.cos(angle) * r;          // Z (negative = in front)
+      // Spherical → cartesian (viewer at origin)
+      const sinPhi = Math.sin(phi);
+      const cosPhi = Math.cos(phi);
+      positions[vi * 3]     = Math.sin(theta) * sinPhi * r;  // X
+      positions[vi * 3 + 1] = cosPhi * r;                     // Y (up)
+      positions[vi * 3 + 2] = -Math.cos(theta) * sinPhi * r; // Z
 
       uvs[vi * 2] = u;
       uvs[vi * 2 + 1] = v;
@@ -231,33 +235,30 @@ export function buildMeshData(
   }
 
   // Build index buffer with depth discontinuity culling
-  // Skip triangles where adjacent vertices have large depth difference
-  const DEPTH_THRESHOLD = 0.15; // skip triangle if depth diff > this
-  const maxQuads = (gw - 1) * (gh - 1);
+  const DEPTH_THRESHOLD = 0.12;
+  // Extra column to wrap horizontally (360° seam)
+  const maxQuads = gw * (gh - 1);
   const indices = new Uint32Array(maxQuads * 6);
   let idx = 0;
 
   for (let y = 0; y < gh - 1; y++) {
-    for (let x = 0; x < gw - 1; x++) {
+    for (let x = 0; x < gw; x++) {
+      // Wrap: last column connects to first column (360° seam)
+      const x2 = (x + 1) % gw;
       const tl = y * gw + x;
-      const tr = tl + 1;
+      const tr = y * gw + x2;
       const bl = (y + 1) * gw + x;
-      const br = bl + 1;
+      const br = (y + 1) * gw + x2;
 
       const dTL = depthGrid[tl];
       const dTR = depthGrid[tr];
       const dBL = depthGrid[bl];
       const dBR = depthGrid[br];
 
-      // Check max depth difference across the quad
       const maxD = Math.max(dTL, dTR, dBL, dBR);
       const minD = Math.min(dTL, dTR, dBL, dBR);
 
-      if (maxD - minD > DEPTH_THRESHOLD) {
-        // Depth discontinuity — skip this quad entirely
-        // This prevents stretchy triangles at foreground/background edges
-        continue;
-      }
+      if (maxD - minD > DEPTH_THRESHOLD) continue;
 
       indices[idx++] = tl;
       indices[idx++] = bl;

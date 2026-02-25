@@ -34,9 +34,10 @@ void main() {
   // Original position
   vec3 pos = a_position;
 
-  // depth is stored in a_position.z (mapped from depth 0-1 to z -1.0..1.0)
-  // Recover normalized depth: 0=far, 1=close
-  float depthFactor = a_position.z * 0.5 + 0.5;
+  // Points are in spherical coords — distance from origin indicates depth
+  // Close objects: r ~1.5 (5.0 - 3.5*1.0), Far objects: r ~5.0
+  float dist = length(a_position);
+  float depthFactor = 1.0 - clamp((dist - 1.5) / 3.5, 0.0, 1.0);
 
   // ── Coherence displacement ──
   // Low coherence → scatter points using noise
@@ -77,8 +78,8 @@ void main() {
 
   // ── Point size: coherence boost + depth perspective ──
   float baseSize = u_pointScale;
-  float coherenceBoost = u_coherence * u_coherence * 8.0; // quadratic — big jump near 1.0
-  float audioPtSize = u_bass * 3.0 + u_beat * 4.0;
+  float coherenceBoost = u_coherence * u_coherence * 12.0; // quadratic — big jump near 1.0
+  float audioPtSize = u_bass * 4.0 + u_beat * 5.0;
   float ptSize = baseSize + coherenceBoost + audioPtSize;
 
   // Closer points are bigger (perspective)
@@ -147,7 +148,7 @@ export class PointCloudRenderer {
   onError: ((msg: string) => void) | null = null;
 
   init(canvas: HTMLCanvasElement): void {
-    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+    const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: false });
     if (!gl) {
       this.onError?.('WebGL2 not supported');
       return;
@@ -263,7 +264,7 @@ export class PointCloudRenderer {
     if (!gl || !this.program) return;
 
     gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    gl.clearColor(0, 0, 0, 1);
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     gl.useProgram(this.program);
