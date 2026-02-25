@@ -160,11 +160,12 @@ export class App {
 
         // Step 3: Segment the scene
         this.ui.setLoading(true, 'Segmenting scene...');
-        const { segments, count: segCount } = await estimateSegments(
+        const segResult = await estimateSegments(
           imageDataUrl, w, h,
           (msg) => this.ui.setLoading(true, msg),
           depthMap,
         );
+        const { segments, count: segCount } = segResult;
 
         // Step 4: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
@@ -179,7 +180,8 @@ export class App {
           dSum += depthMap[i];
         }
         const dMean = dSum / depthMap.length;
-        this.ui.showToast(`Depth: ${dMin.toFixed(2)}-${dMax.toFixed(2)} avg=${dMean.toFixed(2)} | ${(cloud.count/1000).toFixed(0)}K pts`, 8000);
+        const segInfo = segResult.labels?.slice(0, 4).join(', ') || 'none';
+        this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | ${segCount} segments: ${segInfo}`, 10000);
 
         // Step 5: Set up autonomous camera with depth info
         this.camera.setDepthMap(depthMap, w, h);

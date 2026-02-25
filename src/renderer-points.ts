@@ -7,7 +7,7 @@ precision highp float;
 
 in vec3 a_position;
 in vec3 a_color;
-in float a_segment;
+in float a_segment; // audio category: 0-5 normalized to 0-1
 
 uniform mat4 u_projection;
 uniform mat4 u_view;
@@ -16,14 +16,14 @@ uniform float u_bass;
 uniform float u_mid;
 uniform float u_high;
 uniform float u_beat;
-uniform float u_band0;
-uniform float u_band1;
-uniform float u_band2;
-uniform float u_band3;
-uniform float u_band4;
-uniform float u_band5;
-uniform float u_band6;
-uniform float u_band7;
+uniform float u_band0; // sub-bass 20-60Hz
+uniform float u_band1; // bass 60-250Hz
+uniform float u_band2; // low-mid 250-500Hz
+uniform float u_band3; // mid 500-2kHz
+uniform float u_band4; // upper-mid 2-4kHz
+uniform float u_band5; // presence 4-6kHz
+uniform float u_band6; // brilliance 6-12kHz
+uniform float u_band7; // air 12-20kHz
 uniform float u_coherence;
 uniform float u_pointScale;
 uniform float u_transition;
@@ -37,43 +37,95 @@ float hash(float n) {
   return fract(sin(n * 127.1) * 43758.5453);
 }
 
-// GLSL ES doesn't support array indexing by variable — use if/else chain
-float getBand(int idx) {
-  if (idx <= 0) return u_band0;
-  else if (idx == 1) return u_band1;
-  else if (idx == 2) return u_band2;
-  else if (idx == 3) return u_band3;
-  else if (idx == 4) return u_band4;
-  else if (idx == 5) return u_band5;
-  else if (idx == 6) return u_band6;
-  else return u_band7;
-}
-
 void main() {
   float idx = float(gl_VertexID);
   vec3 pos = a_position;
 
-  // Depth: distance from origin. Close=small r (~0.5), Far=large r (~10)
   float dist = length(a_position);
-  float depthFactor = 1.0 - clamp((dist - 0.5) / 9.5, 0.0, 1.0); // 1=close, 0=far
+  float depthFactor = 1.0 - clamp((dist - 0.5) / 9.5, 0.0, 1.0);
 
-  // Per-point random seeds
   float h1 = hash(idx);
   float h2 = hash(idx + 1000.0);
   float h3 = hash(idx + 2000.0);
 
-  // ── Segment → resonant frequency band ──
-  // a_segment is 0-1, maps across 8 bands
-  float bandIndex = a_segment * 7.0;
-  float lo = floor(bandIndex);
-  float hi = min(lo + 1.0, 7.0);
-  float frac = bandIndex - lo;
-  float resonance = mix(getBand(int(lo)), getBand(int(hi)), frac);
+  // Decode audio category from normalized segment value (0-1 → 0-5)
+  int cat = int(a_segment * 5.0 + 0.5);
 
-  // Per-segment phase offset so animations don't sync
-  float segPhase = a_segment * 6.2831853; // 0-2π
+  // ── Per-category audio energy ──
+  // Each category listens to specific bands with distinct behavior
+  float energy = 0.0;      // how much this object is "activated" by audio
+  vec3 displacement = vec3(0.0);
+  vec3 colorTint = vec3(0.0);
+  float sizeBoost = 0.0;
+  vec3 dir = normalize(pos + vec3(0.001));
+  float t = u_time;
 
-  // ── Form jitter: break grid pattern ──
+  // Cat 0: BASS_SUBJECT — people, animals → deep breathing pulse with bass
+  if (cat == 0) {
+    energy = u_band0 * 0.6 + u_band1 * 0.4;
+    // Slow, powerful inhale/exhale — expand outward with bass
+    displacement = dir * energy * 0.35;
+    // Subtle warm glow on bass hits
+    colorTint = vec3(0.15, 0.05, 0.0) * energy;
+    sizeBoost = energy * 4.0;
+  }
+  // Cat 1: MID_ORGANIC — trees, plants → swaying with melody
+  else if (cat == 1) {
+    energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
+    // Organic swaying — sideways + vertical wave
+    float sway = sin(pos.y * 2.0 + t * 2.0) * energy * 0.25;
+    float wave = cos(pos.x * 1.5 + t * 1.8) * energy * 0.15;
+    displacement = vec3(sway, wave * 0.5, sway * 0.3);
+    // Green tint intensifies with mids
+    colorTint = vec3(-0.02, 0.12, 0.02) * energy;
+    sizeBoost = energy * 2.0;
+  }
+  // Cat 2: HIGH_SKY — sky, clouds, light → shimmer and sparkle with highs
+  else if (cat == 2) {
+    energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
+    // Sparkle: rapid tiny displacement, like glitter
+    float sparkle = sin(idx * 0.3 + t * 12.0) * energy * 0.15;
+    displacement = vec3(sparkle * h1, sparkle * h2, sparkle * h3);
+    // Bright white/blue shimmer
+    float flash = sin(idx * 0.7 + t * 15.0) * 0.5 + 0.5;
+    colorTint = vec3(0.1, 0.12, 0.2) * energy * flash;
+    sizeBoost = energy * 1.5;
+  }
+  // Cat 3: BEAT_GROUND — ground, water, terrain → beat-reactive ripple/impact
+  else if (cat == 3) {
+    energy = u_beat * 0.7 + u_band0 * 0.3;
+    // Impact ripple — radiates outward from center on beats
+    float rippleDist = length(pos.xz);
+    float ripple = sin(rippleDist * 6.0 - t * 8.0) * energy * 0.2;
+    displacement = vec3(0.0, ripple, 0.0);
+    // Flash of warm light on impact
+    colorTint = vec3(0.12, 0.08, 0.0) * u_beat;
+    sizeBoost = u_beat * 3.0;
+  }
+  // Cat 4: MID_STRUCTURE — buildings, vehicles → resonant vibration
+  else if (cat == 4) {
+    energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
+    // Vibration — high-frequency jitter proportional to energy
+    float vib = sin(idx * 0.5 + t * 20.0) * energy * 0.08;
+    displacement = vec3(vib * h1, vib * h2, vib * h3);
+    // Metallic blue/purple tint
+    colorTint = vec3(0.05, 0.02, 0.12) * energy;
+    sizeBoost = energy * 2.0;
+  }
+  // Cat 5: LOW_AMBIENT — walls, misc → subtle low-freq drift
+  else {
+    energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
+    // Very gentle drift
+    float drift = sin(pos.x * 0.5 + t * 0.8) * energy * 0.06;
+    displacement = vec3(drift, drift * 0.5, drift * 0.3);
+    colorTint = vec3(0.03, 0.03, 0.05) * energy;
+    sizeBoost = energy * 1.0;
+  }
+
+  // Apply per-category displacement
+  pos += displacement;
+
+  // ── Form jitter ──
   pos += vec3(
     (hash(idx * 3.7) - 0.5) * u_form * 0.08,
     (hash(idx * 7.3) - 0.5) * u_form * 0.08,
@@ -85,63 +137,36 @@ void main() {
   float localCoherence = clamp(u_coherence + depthProtection * (1.0 - u_coherence), 0.0, 1.0);
   float localChaos = 1.0 - localCoherence;
 
-  // Scatter displacement — segments whose band is active get extra scatter
-  float t = u_time * 0.5;
-  float scatterBoost = 1.0 + resonance * 0.5 * localChaos;
+  // Scatter — audio-active segments scatter more at low coherence
+  float segPhase = a_segment * 6.2831853;
+  float scatterBoost = 1.0 + energy * 0.8 * localChaos;
   vec3 scatter = vec3(
-    sin(idx * 0.017 + t * (0.5 + h1) + segPhase) * h1,
-    cos(idx * 0.013 + t * (0.4 + h2) + segPhase) * h2,
-    sin(idx * 0.011 + t * (0.6 + h3) + segPhase) * h3
+    sin(idx * 0.017 + t * 0.5 * (0.5 + h1) + segPhase) * h1,
+    cos(idx * 0.013 + t * 0.5 * (0.4 + h2) + segPhase) * h2,
+    sin(idx * 0.011 + t * 0.5 * (0.6 + h3) + segPhase) * h3
   ) * localChaos * 2.5 * scatterBoost;
   pos += scatter;
 
-  // ── Per-segment displacement (breathing with resonant band) ──
-  vec3 dir = normalize(pos + vec3(0.001));
-  pos += dir * resonance * 0.2;
-
-  // ── AUDIO: Bass → global breathing (kept for all points) ──
-  pos += dir * u_bass * 0.08 * (0.3 + (1.0 - depthFactor) * 0.7);
-
-  // ── AUDIO: Beat → ripple wave through scene ──
-  float ripplePhase = dist - u_time * 4.0 + segPhase * 0.5;
+  // ── Global beat ripple (subtle, on top of per-category) ──
+  float ripplePhase = dist - t * 4.0;
   float ripple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
-  pos += dir * ripple * u_beat * 0.25 * (0.4 + (1.0 - depthFactor) * 0.6);
-
-  // ── AUDIO: Mid → organic wave movement ──
-  float midWave = (1.0 - depthFactor * 0.5);
-  pos.y += sin(pos.x * 3.0 + u_time * 1.5 + segPhase) * u_mid * 0.06 * midWave;
-  pos.x += cos(pos.y * 2.5 + u_time * 1.2 + segPhase) * u_mid * 0.04 * midWave;
+  pos += dir * ripple * u_beat * 0.12;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
   // ── Point size ──
   float baseSize = u_pointScale;
   float coherenceBoost = localCoherence * localCoherence * 6.0;
-  float ptSize = baseSize + coherenceBoost;
-  // Resonance pulses point size
-  ptSize += resonance * 3.0;
-  // Bass gently swells point size
-  ptSize += u_bass * 1.0;
-  // Closer points bigger
+  float ptSize = baseSize + coherenceBoost + sizeBoost;
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
   // ── Color ──
   v_color = a_color * 1.4 + vec3(0.08);
-
-  // Segment glow: segments glow brighter when their band is active
-  v_color += v_color * resonance * 0.35;
-
-  // High frequencies → sparkle/shimmer
-  float shimmer = sin(idx * 0.1 + u_time * 8.0 + segPhase) * 0.5 + 0.5;
-  v_color += vec3(u_high * 0.3 * h1 * shimmer, u_high * 0.2 * h2 * shimmer, u_high * 0.35 * h3 * shimmer);
-
-  // Mid → warm hue shift
-  v_color.r += u_mid * 0.08;
-  v_color.b -= u_mid * 0.04;
-
-  // Beat → brief bright pulse
-  v_color += vec3(0.15, 0.08, 0.18) * u_beat * (0.5 + depthFactor * 0.5);
+  // Per-category color tint
+  v_color += colorTint;
+  // Beat flash (subtle global)
+  v_color += vec3(0.08, 0.04, 0.1) * u_beat;
 
   v_alpha = u_transition;
   v_coherence = localCoherence;
