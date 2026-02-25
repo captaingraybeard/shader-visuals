@@ -10,6 +10,7 @@ export class UI {
   onPresetSelect: ((name: string) => void) | null = null;
   onIntensityChange: ((value: number) => void) | null = null;
   onMicToggle: (() => void) | null = null;
+  onMusicFile: ((file: File) => void) | null = null;
   onApiKeyChange: ((key: string) => void) | null = null;
 
   private overlay!: HTMLElement;
@@ -20,6 +21,8 @@ export class UI {
   private sceneInput!: HTMLInputElement;
   private vibeInput!: HTMLInputElement;
   private micBtn!: HTMLButtonElement;
+  private musicBtn!: HTMLButtonElement;
+  private fileInput!: HTMLInputElement;
   private settingsBtn!: HTMLButtonElement;
   private apiKeyInput!: HTMLInputElement;
   private intensitySlider!: HTMLInputElement;
@@ -105,6 +108,27 @@ export class UI {
       this.resetAutoHide();
     });
 
+    // Music file button
+    this.musicBtn = el('button', 'sv-btn sv-btn-icon') as HTMLButtonElement;
+    this.musicBtn.innerHTML = musicIcon;
+    this.musicBtn.title = 'Play music file';
+    this.fileInput = el('input', '') as HTMLInputElement;
+    this.fileInput.type = 'file';
+    this.fileInput.accept = 'audio/*';
+    this.fileInput.style.display = 'none';
+    this.fileInput.addEventListener('change', () => {
+      const file = this.fileInput.files?.[0];
+      if (file) {
+        this.onMusicFile?.(file);
+      }
+      this.fileInput.value = '';
+      this.resetAutoHide();
+    });
+    this.musicBtn.addEventListener('click', () => {
+      this.fileInput.click();
+      this.resetAutoHide();
+    });
+
     this.settingsBtn = el('button', 'sv-btn sv-btn-icon') as HTMLButtonElement;
     this.settingsBtn.innerHTML = gearIcon;
     this.settingsBtn.title = 'Settings';
@@ -114,6 +138,8 @@ export class UI {
     });
 
     toolbar.appendChild(this.micBtn);
+    toolbar.appendChild(this.musicBtn);
+    toolbar.appendChild(this.fileInput);
     toolbar.appendChild(this.settingsBtn);
 
     // Settings panel
@@ -212,6 +238,10 @@ export class UI {
     this.micBtn.classList.toggle('sv-active', active);
   }
 
+  setMusicActive(active: boolean): void {
+    this.musicBtn.classList.toggle('sv-active', active);
+  }
+
   // ── Private ──────────────────────────────────────────
 
   private showOverlay(): void {
@@ -278,6 +308,12 @@ const micOnIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" s
   <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
   <line x1="12" y1="19" x2="12" y2="23"/>
   <line x1="8" y1="23" x2="16" y2="23"/>
+</svg>`;
+
+const musicIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9 18V5l12-2v13"/>
+  <circle cx="6" cy="18" r="3"/>
+  <circle cx="18" cy="16" r="3"/>
 </svg>`;
 
 const gearIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

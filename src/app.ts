@@ -113,15 +113,29 @@ export class App {
     };
 
     this.ui.onMicToggle = async () => {
-      if (this.audio.isActive) {
+      if (this.audio.isActive && this.audio.currentMode === 'mic') {
         this.audio.stop();
+        this.ui.setMicActive(false);
+        this.ui.setMusicActive(false);
       } else {
         try {
-          await this.audio.init();
-          this.audio.start();
+          await this.audio.initMic();
+          this.ui.setMicActive(true);
+          this.ui.setMusicActive(false);
         } catch {
           this.ui.showToast('Microphone access denied', 3000);
         }
+      }
+    };
+
+    this.ui.onMusicFile = (file: File) => {
+      try {
+        this.audio.initFile(file);
+        this.ui.setMusicActive(true);
+        this.ui.setMicActive(false);
+        this.ui.showToast(`Playing: ${file.name}`, 2000);
+      } catch {
+        this.ui.showToast('Failed to play audio file', 3000);
       }
     };
 

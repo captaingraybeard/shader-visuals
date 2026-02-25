@@ -1,13 +1,16 @@
 // Audio engine — Web Audio API + FFT + beat detection
+// Supports two modes: mic input OR file playback
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
+  private source: AudioNode | null = null;
   private stream: MediaStream | null = null;
+  private audioElement: HTMLAudioElement | null = null;
   private freqData = new Uint8Array(0);
   private active = false;
   private failed = false;
+  private mode: 'none' | 'mic' | 'file' = 'none';
 
   // Beat detection state
   private rollingAvg = 0;
@@ -18,21 +21,35 @@ export class AudioEngine {
   private smoothMid = 0;
   private smoothHigh = 0;
 
-  // Smoothing factor (0 = no smoothing, 1 = frozen)
+  // Smoothing factor
   private readonly smooth = 0.8;
 
-  async init(): Promise<void> {
-    try {
-      // Create AudioContext FIRST with playback category so iOS doesn't kill background music
+  private ensureContext(): AudioContext {
+    if (!this.ctx) {
       // @ts-expect-error - webkit prefix for iOS Safari
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AudioCtx({
-        // Tell iOS this is for monitoring, not recording — allows background music to continue
-        sampleRate: 44100,
-      });
+      this.ctx = new AudioCtx({ sampleRate: 44100 });
+    }
+    return this.ctx;
+  }
 
-      // On iOS, we need to set the audio session to allow mixing
-      // getUserMedia with audio constraints that hint at monitoring use
+  private ensureAnalyser(): AnalyserNode {
+    const ctx = this.ensureContext();
+    if (!this.analyser) {
+      this.analyser = ctx.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.4;
+      this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+    }
+    return this.analyser;
+  }
+
+  async initMic(): Promise<void> {
+    this.cleanup();
+    try {
+      const ctx = this.ensureContext();
+      const analyser = this.ensureAnalyser();
+
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
@@ -41,12 +58,11 @@ export class AudioEngine {
         },
       });
 
-      this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 2048;
-      this.analyser.smoothingTimeConstant = 0.4;
-      this.source = this.ctx.createMediaStreamSource(this.stream);
-      this.source.connect(this.analyser);
-      this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+      this.source = ctx.createMediaStreamSource(this.stream);
+      this.source.connect(analyser);
+      this.mode = 'mic';
+      this.active = true;
+      if (ctx.state === 'suspended') ctx.resume();
     } catch (e) {
       console.warn('AudioEngine: mic access denied or unavailable', e);
       this.failed = true;
@@ -54,40 +70,90 @@ export class AudioEngine {
     }
   }
 
-  start(): void {
-    if (this.failed || !this.ctx) return;
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
-    }
+  initFile(file: File): void {
+    this.cleanup();
+    const ctx = this.ensureContext();
+    const analyser = this.ensureAnalyser();
+
+    // Create audio element for playback
+    this.audioElement = new Audio();
+    this.audioElement.crossOrigin = 'anonymous';
+    this.audioElement.src = URL.createObjectURL(file);
+    this.audioElement.loop = true;
+
+    // Connect to analyser AND to destination (speakers)
+    const source = ctx.createMediaElementSource(this.audioElement);
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    this.source = source;
+    this.mode = 'file';
     this.active = true;
+
+    if (ctx.state === 'suspended') ctx.resume();
+    this.audioElement.play();
   }
 
-  stop(): void {
-    this.active = false;
-    // Stop the mic stream tracks to release the mic and let iOS resume normal audio
+  private cleanup(): void {
+    // Stop mic
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
     }
+    // Stop audio element
+    if (this.audioElement) {
+      this.audioElement.pause();
+      URL.revokeObjectURL(this.audioElement.src);
+      this.audioElement = null;
+    }
+    // Disconnect source
     if (this.source) {
       this.source.disconnect();
       this.source = null;
     }
-    if (this.ctx) {
-      this.ctx.close();
-      this.ctx = null;
+    // Disconnect analyser from destination (file mode connects it)
+    if (this.analyser) {
+      try { this.analyser.disconnect(); } catch {}
     }
-    this.analyser = null;
-    this.freqData = new Uint8Array(0);
+
     this.smoothBass = 0;
     this.smoothMid = 0;
     this.smoothHigh = 0;
     this.rollingAvg = 0;
     this.beat = 0;
+    this.mode = 'none';
+    this.active = false;
+    this.failed = false;
+  }
+
+  stop(): void {
+    this.cleanup();
+    if (this.ctx) {
+      this.ctx.close();
+      this.ctx = null;
+      this.analyser = null;
+      this.freqData = new Uint8Array(0);
+    }
   }
 
   get isActive(): boolean {
     return this.active;
+  }
+
+  get currentMode(): string {
+    return this.mode;
+  }
+
+  get audioEl(): HTMLAudioElement | null {
+    return this.audioElement;
+  }
+
+  togglePlayPause(): void {
+    if (this.mode !== 'file' || !this.audioElement) return;
+    if (this.audioElement.paused) {
+      this.audioElement.play();
+    } else {
+      this.audioElement.pause();
+    }
   }
 
   getUniforms(): { u_bass: number; u_mid: number; u_high: number; u_beat: number } {
@@ -99,9 +165,8 @@ export class AudioEngine {
 
     const sampleRate = this.ctx.sampleRate;
     const binCount = this.analyser.frequencyBinCount;
-    const binSize = sampleRate / (binCount * 2); // Hz per bin
+    const binSize = sampleRate / (binCount * 2);
 
-    // Convert Hz to bin indices
     const bassStart = Math.floor(20 / binSize);
     const bassEnd = Math.min(Math.floor(250 / binSize), binCount - 1);
     const midStart = bassEnd + 1;
@@ -113,12 +178,10 @@ export class AudioEngine {
     const rawMid = bandEnergy(this.freqData, midStart, midEnd);
     const rawHigh = bandEnergy(this.freqData, highStart, highEnd);
 
-    // Smooth values to reduce jitter
     this.smoothBass = this.smoothBass * this.smooth + rawBass * (1 - this.smooth);
     this.smoothMid = this.smoothMid * this.smooth + rawMid * (1 - this.smooth);
     this.smoothHigh = this.smoothHigh * this.smooth + rawHigh * (1 - this.smooth);
 
-    // Beat detection
     this.rollingAvg = this.rollingAvg * 0.95 + this.smoothBass * 0.05;
     if (this.smoothBass > this.rollingAvg * 1.5) {
       this.beat = 1.0;
@@ -134,7 +197,6 @@ export class AudioEngine {
   }
 }
 
-/** Average energy in a frequency band, normalized 0-1 from byte data (0-255). */
 function bandEnergy(data: Uint8Array, start: number, end: number): number {
   if (start > end || start >= data.length) return 0;
   let sum = 0;
