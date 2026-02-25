@@ -1,7 +1,10 @@
 import { AudioEngine } from './audio';
 import { Renderer } from './renderer';
 import { PointCloudRenderer } from './renderer-points';
-import { OrbitCamera } from './camera';
+import { MeshRenderer, buildMeshData } from './renderer-mesh';
+import { AutoCamera } from './camera-auto';
+import { PostProcessor } from './postprocess';
+import { DMTOverlay } from './dmt';
 import { UI } from './ui';
 import { generateImage } from './imagegen';
 import { estimateDepth } from './depth';
@@ -10,13 +13,16 @@ import { presets } from './presets';
 import defaultShader from '../shaders/default.frag?raw';
 import type { AudioUniforms } from './types';
 
-type RenderMode = 'shader' | 'pointcloud';
+type RenderMode = 'shader' | 'scene';
 
 export class App {
   private audio: AudioEngine;
-  private renderer: Renderer;       // GLSL fallback
-  private pointRenderer: PointCloudRenderer;
-  private camera: OrbitCamera;
+  private renderer: Renderer;            // GLSL fallback
+  private pointRenderer!: PointCloudRenderer;
+  private meshRenderer!: MeshRenderer;
+  private camera: AutoCamera;
+  private postprocess!: PostProcessor;
+  private dmt!: DMTOverlay;
   private ui: UI;
 
   private intensity = 0.5;
@@ -24,12 +30,19 @@ export class App {
   private mode: RenderMode = 'shader';
   private startTime = 0;
   private running = false;
+  private lastFrameTime = 0;
+
+  // Scene canvas and shared GL context
+  private sceneCanvas: HTMLCanvasElement | null = null;
+  private sceneGL: WebGL2RenderingContext | null = null;
+
+  // Current scene data for both renderers
+  private hasScene = false;
 
   constructor() {
     this.audio = new AudioEngine();
     this.renderer = new Renderer();
-    this.pointRenderer = new PointCloudRenderer();
-    this.camera = new OrbitCamera();
+    this.camera = new AutoCamera();
     this.ui = new UI();
   }
 
@@ -41,12 +54,8 @@ export class App {
     this.renderer.init(canvas, defaultShader);
     this.renderer.onError = (msg) => this.ui.showToast(msg, 4000);
 
-    // Init point cloud renderer (shares the same canvas — will take over when active)
-    // Point renderer uses a separate canvas to avoid GL context conflicts
-    this.initPointCanvas();
-
-    // Attach orbit camera to point cloud canvas
-    this.camera.attach(this.pointCanvas!);
+    // Init scene canvas (mesh + point cloud + post-processing share one GL context)
+    this.initSceneCanvas();
 
     // Init UI
     this.ui.init();
@@ -66,34 +75,53 @@ export class App {
 
     // Start render loop
     this.startTime = performance.now() / 1000;
+    this.lastFrameTime = this.startTime;
     this.running = true;
     this.loop();
 
     this.registerSW();
   }
 
-  // ── Second canvas for point cloud ─────────────────
+  // ── Scene canvas (shared GL context for mesh, points, post-fx, DMT) ──
 
-  private pointCanvas: HTMLCanvasElement | null = null;
+  private initSceneCanvas(): void {
+    this.sceneCanvas = document.createElement('canvas');
+    this.sceneCanvas.id = 'canvas-scene';
+    this.sceneCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:none;';
+    document.body.insertBefore(this.sceneCanvas, document.body.firstChild);
 
-  private initPointCanvas(): void {
-    this.pointCanvas = document.createElement('canvas');
-    this.pointCanvas.id = 'canvas-points';
-    this.pointCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:none;';
-    document.body.insertBefore(this.pointCanvas, document.body.firstChild);
-    this.pointRenderer.init(this.pointCanvas);
+    // Init mesh renderer (creates the shared GL context)
+    this.meshRenderer = new MeshRenderer();
+    this.meshRenderer.onError = (msg) => this.ui.showToast(msg, 4000);
+    this.sceneGL = this.meshRenderer.init(this.sceneCanvas);
+
+    if (!this.sceneGL) {
+      this.ui.showToast('WebGL2 not supported', 4000);
+      return;
+    }
+
+    // Init point cloud renderer on separate canvas (different GL context)
+    // We'll overlay the point renderer on the scene when needed
+    this.pointRenderer = new PointCloudRenderer();
     this.pointRenderer.onError = (msg) => this.ui.showToast(msg, 4000);
+
+    // Post-processing and DMT use the same GL context as the mesh
+    this.postprocess = new PostProcessor();
+    this.postprocess.init(this.sceneGL);
+
+    this.dmt = new DMTOverlay();
+    this.dmt.init(this.sceneGL);
   }
 
   private setMode(mode: RenderMode): void {
     this.mode = mode;
     const shaderCanvas = document.getElementById('canvas') as HTMLCanvasElement;
-    if (mode === 'pointcloud') {
+    if (mode === 'scene') {
       shaderCanvas.style.display = 'none';
-      if (this.pointCanvas) this.pointCanvas.style.display = 'block';
+      if (this.sceneCanvas) this.sceneCanvas.style.display = 'block';
     } else {
       shaderCanvas.style.display = 'block';
-      if (this.pointCanvas) this.pointCanvas.style.display = 'none';
+      if (this.sceneCanvas) this.sceneCanvas.style.display = 'none';
     }
   }
 
@@ -113,11 +141,10 @@ export class App {
         // Step 1: Generate image via DALL-E 3
         const image = await generateImage(prompt, apiKey);
 
-        // Step 2: Estimate depth (ML-based, async)
+        // Step 2: Estimate depth
         const w = image.naturalWidth || image.width;
         const h = image.naturalHeight || image.height;
 
-        // Create a temporary URL from the image for the depth model
         const depthCanvas = document.createElement('canvas');
         depthCanvas.width = w;
         depthCanvas.height = h;
@@ -130,15 +157,34 @@ export class App {
           (msg) => this.ui.setLoading(true, msg),
         );
 
-        // Step 3: Build point cloud (edge-aware density)
+        // Step 3: Build mesh data
+        this.ui.setLoading(true, 'Building mesh...');
+        const meshData = buildMeshData(depthMap, w, h, 256);
+        this.meshRenderer.setMeshData(meshData, image);
+
+        // Step 4: Build point cloud for dissolve transition
         this.ui.setLoading(true, 'Building point cloud...');
         const cloud = buildPointCloud(image, depthMap);
 
-        // Step 4: Upload to renderer and switch mode
+        // Init point renderer if needed (lazy init on separate hidden canvas)
+        if (!this.pointRenderer.hasCloud) {
+          const ptCanvas = document.createElement('canvas');
+          ptCanvas.id = 'canvas-points-hidden';
+          ptCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:none;pointer-events:none;';
+          document.body.insertBefore(ptCanvas, document.body.firstChild);
+          this.pointRenderer.init(ptCanvas);
+        }
         this.pointRenderer.setPointCloud(cloud);
-        this.setMode('pointcloud');
 
-        this.ui.showToast('Point cloud ready', 2000);
+        // Step 5: Set up autonomous camera with depth info
+        this.camera.setDepthMap(depthMap, w, h);
+        this.camera.resetForNewScene();
+
+        // Step 6: Switch to scene mode
+        this.hasScene = true;
+        this.setMode('scene');
+
+        this.ui.showToast('Scene ready', 2000);
       } catch (e) {
         this.ui.showToast(`Failed: ${(e as Error).message}`, 4000);
       } finally {
@@ -204,31 +250,11 @@ export class App {
     const audioData = this.audio.getUniforms();
     const now = performance.now() / 1000;
     const time = now - this.startTime;
+    const dt = now - this.lastFrameTime;
+    this.lastFrameTime = now;
 
-    if (this.mode === 'pointcloud' && this.pointRenderer.hasCloud) {
-      // Point cloud mode
-      this.pointRenderer.resize();
-      const canvas = this.pointCanvas!;
-      const aspect = canvas.clientWidth / canvas.clientHeight || 1;
-
-      // Audio can momentarily push coherence down (bass drops = visual chaos)
-      const effectiveCoherence = Math.max(0, this.coherence - audioData.u_beat * 0.3);
-
-      // Point scale based on canvas size (smaller on mobile for perf)
-      const dpr = window.devicePixelRatio || 1;
-      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 200) * dpr));
-
-      this.pointRenderer.render({
-        projection: this.camera.getProjectionMatrix(aspect),
-        view: this.camera.getViewMatrix(),
-        time,
-        bass: audioData.u_bass,
-        mid: audioData.u_mid,
-        high: audioData.u_high,
-        beat: audioData.u_beat,
-        coherence: effectiveCoherence,
-        pointScale,
-      });
+    if (this.mode === 'scene' && this.hasScene) {
+      this.renderScene(time, dt, audioData);
     } else {
       // GLSL shader fallback mode
       const uniforms: AudioUniforms = {
@@ -246,6 +272,98 @@ export class App {
     requestAnimationFrame(this.loop);
   };
 
+  private renderScene(
+    time: number,
+    dt: number,
+    audioData: { u_bass: number; u_mid: number; u_high: number; u_beat: number },
+  ): void {
+    const gl = this.sceneGL;
+    const canvas = this.sceneCanvas;
+    if (!gl || !canvas) return;
+
+    // Resize
+    this.meshRenderer.resize();
+    const aspect = canvas.clientWidth / canvas.clientHeight || 1;
+
+    // Audio can momentarily push coherence down
+    const effectiveCoherence = Math.max(0, this.coherence - audioData.u_beat * 0.3);
+
+    // Update autonomous camera
+    this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
+    const projection = this.camera.getProjectionMatrix(aspect);
+    const view = this.camera.getViewMatrix();
+
+    // Coherence crossfade:
+    // 1.0 → 0.7: Pure mesh, subtle breathing
+    // 0.7 → 0.4: Mesh dissolves (dissolve 0→1), wireframe shows
+    // 0.4 → 0.0: Point cloud scatters to dust, DMT takes over
+    const dissolve = effectiveCoherence < 0.7
+      ? Math.min(1.0, (0.7 - effectiveCoherence) / 0.3)
+      : 0.0;
+
+    const showPoints = effectiveCoherence < 0.5;
+    const pointAlpha = showPoints
+      ? Math.min(1.0, (0.5 - effectiveCoherence) / 0.3)
+      : 0.0;
+
+    // Begin post-processing scene pass
+    this.postprocess.beginScene();
+
+    // Set GL state
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // Draw mesh (always, fades via dissolve)
+    if (this.meshRenderer.hasData) {
+      this.meshRenderer.render({
+        projection, view, time,
+        bass: audioData.u_bass,
+        mid: audioData.u_mid,
+        high: audioData.u_high,
+        beat: audioData.u_beat,
+        coherence: effectiveCoherence,
+        dissolve,
+      });
+    }
+
+    // Draw point cloud when dissolving (overlaid on mesh)
+    if (showPoints && this.pointRenderer.hasCloud) {
+      // Point cloud renders with its own program — set alpha via coherence
+      const dpr = window.devicePixelRatio || 1;
+      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 200) * dpr));
+
+      // We need to render points into the same FBO
+      // Point renderer uses its own GL context, so we render it separately
+      // For simplicity, integrate point cloud scatter via the mesh dissolve effect
+      // The mesh vertices scatter to become the point cloud at low coherence
+      // This is handled by the dissolve scatter in the mesh vertex shader
+    }
+
+    // DMT overlay (renders into the scene FBO)
+    this.dmt.render({
+      time,
+      bass: audioData.u_bass,
+      mid: audioData.u_mid,
+      high: audioData.u_high,
+      beat: audioData.u_beat,
+      coherence: effectiveCoherence,
+      width: gl.drawingBufferWidth,
+      height: gl.drawingBufferHeight,
+    });
+
+    // End scene — apply post-processing to screen
+    this.postprocess.endScene({
+      time,
+      bass: audioData.u_bass,
+      mid: audioData.u_mid,
+      high: audioData.u_high,
+      beat: audioData.u_beat,
+      coherence: effectiveCoherence,
+    });
+  }
+
   private async registerSW(): Promise<void> {
     // Unregister any existing service workers to prevent stale cache issues
     if ('serviceWorker' in navigator) {
@@ -253,7 +371,6 @@ export class App {
       for (const reg of registrations) {
         await reg.unregister();
       }
-      // Clear all caches
       const keys = await caches.keys();
       for (const key of keys) {
         await caches.delete(key);
