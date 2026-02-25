@@ -78,15 +78,16 @@ void main() {
 
   // ── Point size: coherence boost + depth perspective ──
   float baseSize = u_pointScale;
-  float coherenceBoost = u_coherence * u_coherence * 12.0; // quadratic — big jump near 1.0
-  float audioPtSize = u_bass * 4.0 + u_beat * 5.0;
+  // Aggressive coherence scaling — at 1.0 points overlap to fill the scene
+  float coherenceBoost = u_coherence * u_coherence * u_coherence * 24.0;
+  float audioPtSize = u_bass * 3.0 + u_beat * 4.0;
   float ptSize = baseSize + coherenceBoost + audioPtSize;
 
   // Closer points are bigger (perspective)
-  ptSize *= (0.6 + depthFactor * 0.8);
+  ptSize *= (0.5 + depthFactor * 1.0);
 
-  // Minimum size when scattered so points don't disappear
-  gl_PointSize = max(2.0, ptSize);
+  // Minimum size so scattered points remain visible
+  gl_PointSize = max(1.5, ptSize);
 
   // Boost color brightness — raw image colors are too dark as points
   v_color = a_color * 1.5 + vec3(0.1);
@@ -147,6 +148,12 @@ export class PointCloudRenderer {
 
   onError: ((msg: string) => void) | null = null;
 
+  /** Init with an existing GL context (shared with post-processing/DMT) */
+  initShared(gl: WebGL2RenderingContext): void {
+    this.gl = gl;
+    this.buildProgram();
+  }
+
   init(canvas: HTMLCanvasElement): void {
     const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: false });
     if (!gl) {
@@ -154,8 +161,24 @@ export class PointCloudRenderer {
       return;
     }
     this.gl = gl;
+    this.buildProgram();
 
-    // Compile program
+    // Handle context loss
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.program = null;
+      this.vao = null;
+      this.prevVao = null;
+    });
+
+    // Initial resize
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+  }
+
+  private buildProgram(): void {
+    const gl = this.gl!;
+
     const vs = this.compile(gl.VERTEX_SHADER, VERT);
     const fs = this.compile(gl.FRAGMENT_SHADER, FRAG);
     if (!vs || !fs) return;
@@ -175,7 +198,6 @@ export class PointCloudRenderer {
 
     this.program = prog;
 
-    // Cache uniform locations
     const names = [
       'u_projection', 'u_view', 'u_time', 'u_bass', 'u_mid',
       'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition',
@@ -183,26 +205,6 @@ export class PointCloudRenderer {
     for (const n of names) {
       this.uniforms[n] = gl.getUniformLocation(prog, n);
     }
-
-    // Enable blending for crossfade alpha
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    // Depth test for proper 3D ordering
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
-
-    // Handle context loss
-    canvas.addEventListener('webglcontextlost', (e) => {
-      e.preventDefault();
-      this.program = null;
-      this.vao = null;
-      this.prevVao = null;
-    });
-
-    // Initial resize
-    this.resize();
-    window.addEventListener('resize', () => this.resize());
   }
 
   /** Upload a new point cloud. Crossfades from previous if one exists. */

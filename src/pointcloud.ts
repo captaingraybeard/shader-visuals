@@ -41,8 +41,8 @@ export function buildPointCloud(
 
   // Step 3: Build probability map and estimate total points
   const EDGE_BOOST = 0.7;
-  const TARGET_MIN = 150_000;
-  const TARGET_MAX = 300_000;
+  const TARGET_MIN = 400_000;
+  const TARGET_MAX = 600_000;
 
   // First pass: compute raw probabilities and sum to estimate count
   const prob = new Float32Array(w * h);

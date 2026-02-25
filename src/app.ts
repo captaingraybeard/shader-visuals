@@ -1,7 +1,6 @@
 import { AudioEngine } from './audio';
 import { Renderer } from './renderer';
 import { PointCloudRenderer } from './renderer-points';
-import { MeshRenderer, buildMeshData } from './renderer-mesh';
 import { AutoCamera } from './camera-auto';
 import { PostProcessor } from './postprocess';
 import { DMTOverlay } from './dmt';
@@ -19,7 +18,6 @@ export class App {
   private audio: AudioEngine;
   private renderer: Renderer;            // GLSL fallback
   private pointRenderer!: PointCloudRenderer;
-  private meshRenderer!: MeshRenderer;
   private camera: AutoCamera;
   private postprocess!: PostProcessor;
   private dmt!: DMTOverlay;
@@ -90,27 +88,25 @@ export class App {
     this.sceneCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:none;';
     document.body.insertBefore(this.sceneCanvas, document.body.firstChild);
 
-    // Init mesh renderer (creates the shared GL context)
-    this.meshRenderer = new MeshRenderer();
-    this.meshRenderer.onError = (msg) => this.ui.showToast(msg, 4000);
-    this.sceneGL = this.meshRenderer.init(this.sceneCanvas);
-
-    if (!this.sceneGL) {
+    // Create shared GL context
+    const gl = this.sceneCanvas.getContext('webgl2', { alpha: false, antialias: false });
+    if (!gl) {
       this.ui.showToast('WebGL2 not supported', 4000);
       return;
     }
+    this.sceneGL = gl;
 
-    // Init point cloud renderer on separate canvas (different GL context)
-    // We'll overlay the point renderer on the scene when needed
+    // Point cloud renderer — primary scene renderer
     this.pointRenderer = new PointCloudRenderer();
     this.pointRenderer.onError = (msg) => this.ui.showToast(msg, 4000);
+    this.pointRenderer.initShared(gl);
 
-    // Post-processing and DMT use the same GL context as the mesh
+    // Post-processing and DMT share the same GL context
     this.postprocess = new PostProcessor();
-    this.postprocess.init(this.sceneGL);
+    this.postprocess.init(gl);
 
     this.dmt = new DMTOverlay();
-    this.dmt.init(this.sceneGL);
+    this.dmt.init(gl);
   }
 
   private setMode(mode: RenderMode): void {
@@ -157,23 +153,9 @@ export class App {
           (msg) => this.ui.setLoading(true, msg),
         );
 
-        // Step 3: Build mesh data
-        this.ui.setLoading(true, 'Building mesh...');
-        const meshData = buildMeshData(depthMap, w, h, 256);
-        this.meshRenderer.setMeshData(meshData, image);
-
-        // Step 4: Build point cloud for dissolve transition
+        // Step 3: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
         const cloud = buildPointCloud(image, depthMap);
-
-        // Init point renderer if needed (lazy init on separate hidden canvas)
-        if (!this.pointRenderer.hasCloud) {
-          const ptCanvas = document.createElement('canvas');
-          ptCanvas.id = 'canvas-points-hidden';
-          ptCanvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;display:none;pointer-events:none;';
-          document.body.insertBefore(ptCanvas, document.body.firstChild);
-          this.pointRenderer.init(ptCanvas);
-        }
         this.pointRenderer.setPointCloud(cloud);
 
         // Step 5: Set up autonomous camera with depth info
@@ -285,12 +267,18 @@ export class App {
     const canvas = this.sceneCanvas;
     if (!gl || !canvas) return;
 
-    // Resize
-    this.meshRenderer.resize();
+    // Resize canvas to match display
+    const dpr = window.devicePixelRatio || 1;
+    const cw = canvas.clientWidth * dpr;
+    const ch = canvas.clientHeight * dpr;
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw;
+      canvas.height = ch;
+    }
+
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
 
-    // Audio drives coherence: total energy pushes coherence DOWN from the slider's base level
-    // Slider = base coherence, music = chaos factor
+    // Audio drives coherence: total energy pushes coherence DOWN from slider base
     const audioEnergy = audioData.u_bass * 0.4 + audioData.u_mid * 0.2 + audioData.u_high * 0.1 + audioData.u_beat * 0.3;
     const effectiveCoherence = Math.max(0, Math.min(1, this.coherence - audioEnergy * (1.0 - this.coherence * 0.3)));
 
@@ -299,53 +287,18 @@ export class App {
     const projection = this.camera.getProjectionMatrix(aspect);
     const view = this.camera.getViewMatrix();
 
-    // Coherence crossfade:
-    // 1.0 → 0.7: Pure mesh, subtle breathing
-    // 0.7 → 0.4: Mesh dissolves (dissolve 0→1), wireframe shows
-    // 0.4 → 0.0: Point cloud scatters to dust, DMT takes over
-    const dissolve = effectiveCoherence < 0.7
-      ? Math.min(1.0, (0.7 - effectiveCoherence) / 0.3)
-      : 0.0;
-
-    const showPoints = effectiveCoherence < 0.5;
-    const pointAlpha = showPoints
-      ? Math.min(1.0, (0.5 - effectiveCoherence) / 0.3)
-      : 0.0;
-
     // Begin post-processing scene pass
     this.postprocess.beginScene();
 
-    // Set GL state
+    // GL state
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    // Draw mesh (always, fades via dissolve)
-    if (this.meshRenderer.hasData) {
-      this.meshRenderer.render({
-        projection, view, time,
-        bass: audioData.u_bass,
-        mid: audioData.u_mid,
-        high: audioData.u_high,
-        beat: audioData.u_beat,
-        coherence: effectiveCoherence,
-        dissolve,
-      });
-    }
-
-    // Always render point cloud (it's the scene's 3D representation)
+    // Point cloud — the entire scene
     if (this.pointRenderer.hasCloud) {
-      this.pointRenderer.resize();
-      const dpr = window.devicePixelRatio || 1;
-      const pointScale = Math.max(4, Math.min(14, (canvas.clientWidth / 150) * dpr));
-
-      // Show point canvas overlaid
-      const ptCanvas = document.getElementById('canvas-points-hidden') as HTMLCanvasElement | null;
-      if (ptCanvas) {
-        ptCanvas.style.display = 'block';
-        ptCanvas.style.pointerEvents = 'none';
-      }
+      const pointScale = Math.max(3, Math.min(10, (canvas.clientWidth / 180) * dpr));
 
       this.pointRenderer.render({
         projection,
@@ -360,7 +313,7 @@ export class App {
       });
     }
 
-    // DMT overlay (renders into the scene FBO)
+    // DMT overlay (into scene FBO)
     this.dmt.render({
       time,
       bass: audioData.u_bass,
