@@ -1,4 +1,4 @@
-// Image + depth → 3D point cloud buffers
+// Image + depth → 3D point cloud buffers with edge-aware density sampling
 
 export interface PointCloudData {
   positions: Float32Array; // x, y, z per point (3 floats each)
@@ -8,13 +8,13 @@ export interface PointCloudData {
 
 /**
  * Build a point cloud from an image and depth map.
- * Samples every `step` pixels for performance.
- * Positions normalized to [-1, 1] centered at origin.
+ * Uses Sobel edge detection to sample more points on detailed areas
+ * and fewer on flat regions like sky.
+ * Target: ~150K-300K points.
  */
 export function buildPointCloud(
   image: HTMLImageElement,
   depthMap: Float32Array,
-  step = 2,
 ): PointCloudData {
   // Draw image to canvas to extract pixel data
   const canvas = document.createElement('canvas');
@@ -27,33 +27,87 @@ export function buildPointCloud(
   const imageData = ctx.getImageData(0, 0, w, h);
   const pixels = imageData.data;
 
-  const cols = Math.floor(w / step);
-  const rows = Math.floor(h / step);
-  const count = cols * rows;
+  // Step 1: Convert to grayscale
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const r = pixels[i * 4];
+    const g = pixels[i * 4 + 1];
+    const b = pixels[i * 4 + 2];
+    gray[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  }
 
+  // Step 2: Sobel filter for edge magnitude
+  const edges = sobelFilter(gray, w, h);
+
+  // Step 3: Build probability map and estimate total points
+  const EDGE_BOOST = 0.7;
+  const TARGET_MIN = 150_000;
+  const TARGET_MAX = 300_000;
+
+  // First pass: compute raw probabilities and sum to estimate count
+  const prob = new Float32Array(w * h);
+  let probSum = 0;
+  for (let i = 0; i < w * h; i++) {
+    // Start with a base density of 1.0, will be scaled down
+    prob[i] = edges[i] * EDGE_BOOST;
+    probSum += prob[i];
+  }
+
+  // Compute base density to hit target count
+  // Total expected = sum(baseDensity + edge*EDGE_BOOST) for all pixels
+  // = w*h*baseDensity + probSum
+  // We want this between TARGET_MIN and TARGET_MAX
+  const targetCount = (TARGET_MIN + TARGET_MAX) / 2;
+  let baseDensity = Math.max(0.05, (targetCount - probSum) / (w * h));
+  baseDensity = Math.min(baseDensity, 0.8);
+
+  // Add base density to probabilities
+  for (let i = 0; i < w * h; i++) {
+    prob[i] = Math.min(1.0, baseDensity + prob[i]);
+  }
+
+  // Step 4: Sample points using probability map
+  // First pass: count how many points we'll generate (for allocation)
+  // Use a seeded pseudo-random for deterministic results
+  let seed = 42;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+
+  let count = 0;
+  const selected = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (rand() < prob[i]) {
+      selected[i] = 1;
+      count++;
+    }
+  }
+
+  // Allocate buffers
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
 
+  // Second pass: fill buffers
   let idx = 0;
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const px = col * step;
-      const py = row * step;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!selected[i]) continue;
 
       // Normalize x,y to [-1, 1]
-      const x = (px / w) * 2 - 1;
-      const y = -((py / h) * 2 - 1); // flip Y so top is up
+      const nx = (x / w) * 2 - 1;
+      const ny = -((y / h) * 2 - 1); // flip Y so top is up
 
       // Depth: 0-1 mapped to z range [-0.5, 0.5]
-      const depthIdx = py * w + px;
-      const z = (depthMap[depthIdx] - 0.5);
+      const z = depthMap[i] - 0.5;
 
-      positions[idx * 3] = x;
-      positions[idx * 3 + 1] = y;
+      positions[idx * 3] = nx;
+      positions[idx * 3 + 1] = ny;
       positions[idx * 3 + 2] = z;
 
       // Color from image pixel
-      const pixIdx = (py * w + px) * 4;
+      const pixIdx = i * 4;
       colors[idx * 3] = pixels[pixIdx] / 255;
       colors[idx * 3 + 1] = pixels[pixIdx + 1] / 255;
       colors[idx * 3 + 2] = pixels[pixIdx + 2] / 255;
@@ -63,4 +117,45 @@ export function buildPointCloud(
   }
 
   return { positions, colors, count };
+}
+
+/**
+ * Sobel edge detection filter.
+ * Returns Float32Array of edge magnitudes normalized to 0-1.
+ */
+function sobelFilter(gray: Float32Array, w: number, h: number): Float32Array {
+  const edges = new Float32Array(w * h);
+  let maxEdge = 0;
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      // 3x3 Sobel kernels
+      const tl = gray[(y - 1) * w + (x - 1)];
+      const tc = gray[(y - 1) * w + x];
+      const tr = gray[(y - 1) * w + (x + 1)];
+      const ml = gray[y * w + (x - 1)];
+      const mr = gray[y * w + (x + 1)];
+      const bl = gray[(y + 1) * w + (x - 1)];
+      const bc = gray[(y + 1) * w + x];
+      const br = gray[(y + 1) * w + (x + 1)];
+
+      // Gx = [-1 0 1; -2 0 2; -1 0 1]
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      // Gy = [-1 -2 -1; 0 0 0; 1 2 1]
+      const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+
+      const mag = Math.sqrt(gx * gx + gy * gy);
+      edges[y * w + x] = mag;
+      if (mag > maxEdge) maxEdge = mag;
+    }
+  }
+
+  // Normalize to 0-1
+  if (maxEdge > 0) {
+    for (let i = 0; i < edges.length; i++) {
+      edges[i] /= maxEdge;
+    }
+  }
+
+  return edges;
 }

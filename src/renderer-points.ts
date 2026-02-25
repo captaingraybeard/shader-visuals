@@ -21,6 +21,7 @@ uniform float u_transition; // 0-1 crossfade between old and new cloud
 
 out vec3 v_color;
 out float v_alpha;
+out float v_coherence;
 
 // Simple hash for per-point randomness
 float hash(float n) {
@@ -33,42 +34,58 @@ void main() {
   // Original position
   vec3 pos = a_position;
 
+  // depth is stored in a_position.z (mapped from depth 0-1 to z -0.5..0.5)
+  // Recover normalized depth: 0=far, 1=close
+  float depthFactor = a_position.z + 0.5;
+
   // ── Coherence displacement ──
   // Low coherence → scatter points using noise
   float chaos = 1.0 - u_coherence;
+
+  // Foreground resists displacement more
+  // At coherence=0.5: far points are fully chaotic, close points barely move
+  float localChaos = chaos * (1.0 - depthFactor * u_coherence);
 
   // Per-point random seed
   float h1 = hash(idx);
   float h2 = hash(idx + 1000.0);
   float h3 = hash(idx + 2000.0);
 
-  // Noise-based displacement (mild at chaos=0.5, wild at chaos=1.0)
+  // Noise-based displacement scaled by localChaos instead of global chaos
   float t = u_time * 0.5;
   vec3 scatter = vec3(
     sin(idx * 0.017 + t * (0.5 + h1)) * h1,
     cos(idx * 0.013 + t * (0.4 + h2)) * h2,
     sin(idx * 0.011 + t * (0.6 + h3)) * h3
-  ) * chaos * 2.0;
+  ) * localChaos * 2.0;
 
   pos += scatter;
 
   // ── Audio modulation ──
-  // Bass pushes points outward from center
+  // Bass pushes points outward — foreground holds position, background explodes
   vec3 dir = normalize(pos + vec3(0.001));
-  pos += dir * u_bass * 0.15 * (1.0 + chaos * 0.5);
+  pos += dir * u_bass * 0.15 * (1.0 - depthFactor * 0.7);
 
-  // Beat snap — momentarily pull toward origin then push
-  pos *= 1.0 + u_beat * 0.2 * chaos;
+  // Beat snap — background pushed more, foreground less
+  float beatPush = u_beat * (1.0 - depthFactor * 0.8);
+  pos *= 1.0 + beatPush * 0.2;
 
   // Mid frequency: gentle wave displacement
   pos.y += sin(pos.x * 4.0 + u_time * 2.0) * u_mid * 0.05;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
-  // Point size: base + audio-reactive
-  float basePtSize = u_pointScale;
+  // ── Point size: coherence boost + depth perspective ──
+  float baseSize = u_pointScale;
+  float coherenceBoost = u_coherence * u_coherence * 3.0; // quadratic — big jump near 1.0
   float audioPtSize = u_bass * 2.0 + u_beat * 3.0;
-  gl_PointSize = max(1.0, basePtSize + audioPtSize);
+  float ptSize = baseSize + coherenceBoost + audioPtSize;
+
+  // Closer points are bigger (perspective)
+  ptSize *= (0.5 + depthFactor * 0.5);
+
+  // Minimum size when scattered so points don't disappear
+  gl_PointSize = max(1.5, ptSize);
 
   v_color = a_color;
 
@@ -79,6 +96,7 @@ void main() {
   v_color += vec3(0.15, 0.08, 0.2) * u_beat;
 
   v_alpha = u_transition;
+  v_coherence = u_coherence;
 }
 `;
 
@@ -87,17 +105,19 @@ precision highp float;
 
 in vec3 v_color;
 in float v_alpha;
+in float v_coherence;
 
 out vec4 fragColor;
 
 void main() {
-  // Round points — discard corners for circular shape
-  vec2 coord = gl_PointCoord * 2.0 - 1.0;
-  float r2 = dot(coord, coord);
-  if (r2 > 1.0) discard;
+  // Soft circle at low coherence, squarish at high coherence
+  float dist = length(gl_PointCoord - 0.5);
+  float shapeThreshold = mix(0.5, 0.7, v_coherence); // circle → square-ish
+  if (dist > shapeThreshold) discard;
 
-  // Soft edge glow
-  float edge = 1.0 - smoothstep(0.5, 1.0, r2);
+  // Softer edge at low coherence, solid fill at high coherence
+  float edgeStart = mix(0.3, 0.6, v_coherence);
+  float edge = 1.0 - smoothstep(edgeStart, shapeThreshold, dist);
 
   fragColor = vec4(v_color * edge, v_alpha * edge);
 }

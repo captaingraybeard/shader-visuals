@@ -113,15 +113,26 @@ export class App {
         // Step 1: Generate image via DALL-E 3
         const image = await generateImage(prompt, apiKey);
 
-        // Step 2: Estimate depth
-        this.ui.setLoading(true, 'Estimating depth...');
+        // Step 2: Estimate depth (ML-based, async)
         const w = image.naturalWidth || image.width;
         const h = image.naturalHeight || image.height;
-        const depthMap = estimateDepth(w, h);
 
-        // Step 3: Build point cloud
+        // Create a temporary URL from the image for the depth model
+        const depthCanvas = document.createElement('canvas');
+        depthCanvas.width = w;
+        depthCanvas.height = h;
+        const depthCtx = depthCanvas.getContext('2d')!;
+        depthCtx.drawImage(image, 0, 0, w, h);
+        const imageDataUrl = depthCanvas.toDataURL('image/jpeg', 0.9);
+
+        const depthMap = await estimateDepth(
+          imageDataUrl, w, h,
+          (msg) => this.ui.setLoading(true, msg),
+        );
+
+        // Step 3: Build point cloud (edge-aware density)
         this.ui.setLoading(true, 'Building point cloud...');
-        const cloud = buildPointCloud(image, depthMap, 2);
+        const cloud = buildPointCloud(image, depthMap);
 
         // Step 4: Upload to renderer and switch mode
         this.pointRenderer.setPointCloud(cloud);
