@@ -34,22 +34,12 @@ export function buildPointCloud(
   const segments = new Float32Array(count);
   const segNorm = segmentCount && segmentCount > 1 ? segmentCount - 1 : 1;
 
-  // Spherical projection params
-  const SPHERE_RADIUS = 10.0;
-  const DEPTH_PUSH = 9.5;  // close at r=0.5, far at r=10.0
-  const ARC_H = Math.PI * 2;
-  const ARC_V = Math.PI * 0.85;
-  const ARC_H_OFFSET = -Math.PI;
-  const ARC_V_OFFSET = (Math.PI - ARC_V) / 2;
-
-  // Debug: log depth stats
-  let dMin = Infinity, dMax = -Infinity, dSum = 0;
-  for (let i = 0; i < depthMap.length; i++) {
-    if (depthMap[i] < dMin) dMin = depthMap[i];
-    if (depthMap[i] > dMax) dMax = depthMap[i];
-    dSum += depthMap[i];
-  }
-  console.log(`[pointcloud] depth stats: min=${dMin.toFixed(3)} max=${dMax.toFixed(3)} mean=${(dSum/depthMap.length).toFixed(3)} pixels=${count}`);
+  // 3D planar projection: image is a plane, depth displaces along Z
+  // This gives real parallax — close objects are physically closer to camera
+  const PLANE_WIDTH = 8.0;   // world units wide
+  const PLANE_HEIGHT = PLANE_WIDTH * (h / w); // maintain aspect ratio
+  const DEPTH_RANGE = 6.0;   // how far depth pushes (close=0, far=-DEPTH_RANGE)
+  const DEPTH_OFFSET = -3.0; // base distance from camera (negative Z = away)
 
   let idx = 0;
   for (let y = 0; y < h; y++) {
@@ -59,15 +49,16 @@ export function buildPointCloud(
       const v = y / h;
       const depth = depthMap[i]; // 0=far, 1=close
 
-      const theta = ARC_H_OFFSET + u * ARC_H;
-      const phi = ARC_V_OFFSET + v * ARC_V;
-      const r = SPHERE_RADIUS - depth * DEPTH_PUSH;
+      // X: left to right
+      const px = (u - 0.5) * PLANE_WIDTH;
+      // Y: top to bottom (flip so +Y is up)
+      const py = (0.5 - v) * PLANE_HEIGHT;
+      // Z: depth — close objects near camera (less negative), far objects pushed back
+      const pz = DEPTH_OFFSET - (1.0 - depth) * DEPTH_RANGE;
 
-      const sinPhi = Math.sin(phi);
-      const cosPhi = Math.cos(phi);
-      positions[idx * 3]     = Math.sin(theta) * sinPhi * r;
-      positions[idx * 3 + 1] = cosPhi * r;
-      positions[idx * 3 + 2] = -Math.cos(theta) * sinPhi * r;
+      positions[idx * 3]     = px;
+      positions[idx * 3 + 1] = py;
+      positions[idx * 3 + 2] = pz;
 
       // Color from image pixel
       const pixIdx = i * 4;

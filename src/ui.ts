@@ -304,6 +304,99 @@ export class UI {
     }, duration);
   }
 
+  /** Show clickable segment list. Clicking a segment highlights it on the scene. */
+  showSegmentPanel(
+    labels: string[],
+    onHighlight: (categoryIndex: number | null) => void,
+  ): void {
+    // Remove old panel if exists
+    const old = document.getElementById('sv-segment-panel');
+    if (old) old.remove();
+
+    const panel = el('div', 'sv-segment-panel');
+    panel.id = 'sv-segment-panel';
+    panel.style.cssText = `
+      position:fixed; bottom:80px; left:10px; z-index:1001;
+      background:rgba(0,0,0,0.75); backdrop-filter:blur(8px);
+      border-radius:10px; padding:8px 10px; max-width:260px;
+      font-size:11px; color:#fff; pointer-events:auto;
+    `;
+
+    const title = el('div', '');
+    title.style.cssText = 'font-weight:bold; margin-bottom:4px; font-size:12px;';
+    title.textContent = `Segments (${labels.length})`;
+    panel.appendChild(title);
+
+    const catNames = ['🫀 Bass/Subject', '🌿 Mid/Organic', '✨ High/Sky', '🌊 Beat/Ground', '🏗️ Mid/Structure', '🧱 Ambient'];
+    const catColors = ['#ff6b6b', '#51cf66', '#74c0fc', '#ffd43b', '#b197fc', '#868e96'];
+
+    // Group labels by category
+    const byCat: Record<number, string[]> = {};
+    for (const lbl of labels) {
+      const match = lbl.match(/→cat(\d)/);
+      if (match) {
+        const cat = parseInt(match[1]);
+        if (!byCat[cat]) byCat[cat] = [];
+        const name = lbl.split('→')[0];
+        byCat[cat].push(name);
+      }
+    }
+
+    let activeBtn: HTMLElement | null = null;
+
+    for (let cat = 0; cat < 6; cat++) {
+      const items = byCat[cat];
+      if (!items || items.length === 0) continue;
+
+      const row = el('div', '');
+      row.style.cssText = `
+        display:flex; align-items:center; gap:6px; padding:3px 6px;
+        border-radius:6px; cursor:pointer; margin:2px 0;
+        transition: background 0.15s;
+      `;
+
+      const dot = el('span', '');
+      dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${catColors[cat]}`;
+
+      const text = el('span', '');
+      text.style.cssText = 'flex:1; opacity:0.9;';
+      text.textContent = `${catNames[cat]}: ${items.join(', ')}`;
+
+      row.appendChild(dot);
+      row.appendChild(text);
+
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (activeBtn === row) {
+          // Deselect
+          row.style.background = '';
+          activeBtn = null;
+          onHighlight(null);
+        } else {
+          if (activeBtn) activeBtn.style.background = '';
+          row.style.background = `${catColors[cat]}33`;
+          activeBtn = row;
+          onHighlight(cat);
+        }
+      });
+
+      panel.appendChild(row);
+    }
+
+    // Close button
+    const close = el('div', '');
+    close.style.cssText = 'text-align:right; margin-top:4px; cursor:pointer; opacity:0.5; font-size:10px;';
+    close.textContent = '✕ close';
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onHighlight(null);
+      panel.remove();
+    });
+    panel.appendChild(close);
+
+    document.body.appendChild(panel);
+  }
+
   setLoading(loading: boolean, message?: string): void {
     if (loading) {
       this.generateBtn.disabled = true;

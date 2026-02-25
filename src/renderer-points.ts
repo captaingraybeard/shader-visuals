@@ -28,6 +28,7 @@ uniform float u_coherence;
 uniform float u_pointScale;
 uniform float u_transition;
 uniform float u_form;
+uniform float u_highlightCat; // -1 = none, 0-5 = highlight this category
 
 out vec3 v_color;
 out float v_alpha;
@@ -41,8 +42,9 @@ void main() {
   float idx = float(gl_VertexID);
   vec3 pos = a_position;
 
-  float dist = length(a_position);
-  float depthFactor = 1.0 - clamp((dist - 0.5) / 9.5, 0.0, 1.0);
+  // Depth: Z coordinate. Close = -3 (DEPTH_OFFSET), Far = -9 (DEPTH_OFFSET - DEPTH_RANGE)
+  float depthFactor = clamp((-a_position.z - 3.0) / 6.0, 0.0, 1.0);
+  depthFactor = 1.0 - depthFactor; // 1=close, 0=far
 
   float h1 = hash(idx);
   float h2 = hash(idx + 1000.0);
@@ -57,7 +59,8 @@ void main() {
   vec3 displacement = vec3(0.0);
   vec3 colorTint = vec3(0.0);
   float sizeBoost = 0.0;
-  vec3 dir = normalize(pos + vec3(0.001));
+  // Direction for displacement: toward camera (+Z direction)
+  vec3 dir = vec3(0.0, 0.0, 1.0);
   float t = u_time;
 
   // Cat 0: BASS_SUBJECT — people, animals → deep breathing pulse with bass
@@ -148,9 +151,10 @@ void main() {
   pos += scatter;
 
   // ── Global beat ripple (subtle, on top of per-category) ──
-  float ripplePhase = dist - t * 4.0;
-  float ripple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
-  pos += dir * ripple * u_beat * 0.12;
+  float zDist = -a_position.z; // distance from camera
+  float ripplePhase = zDist - t * 4.0;
+  float gRipple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
+  pos += dir * gRipple * u_beat * 0.12;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
@@ -167,6 +171,19 @@ void main() {
   v_color += colorTint;
   // Beat flash (subtle global)
   v_color += vec3(0.08, 0.04, 0.1) * u_beat;
+
+  // Highlight mode: dim non-selected categories, brighten selected
+  if (u_highlightCat >= 0.0) {
+    float catF = float(cat);
+    if (abs(catF - u_highlightCat) > 0.5) {
+      // Not selected — dim heavily
+      v_color *= 0.15;
+    } else {
+      // Selected — brighten and add glow
+      v_color *= 1.5;
+      v_color += vec3(0.1);
+    }
+  }
 
   v_alpha = u_transition;
   v_coherence = localCoherence;
@@ -276,7 +293,7 @@ export class PointCloudRenderer {
 
     const names = [
       'u_projection', 'u_view', 'u_time', 'u_bass', 'u_mid',
-      'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition', 'u_form',
+      'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition', 'u_form', 'u_highlightCat',
       'u_band0', 'u_band1', 'u_band2', 'u_band3',
       'u_band4', 'u_band5', 'u_band6', 'u_band7',
     ];
@@ -357,6 +374,7 @@ export class PointCloudRenderer {
     coherence: number;
     pointScale: number;
     form: number;
+    highlightCat: number;
   }): void {
     const gl = this.gl;
     if (!gl || !this.program) return;
@@ -387,6 +405,7 @@ export class PointCloudRenderer {
     if (u.u_coherence) gl.uniform1f(u.u_coherence, opts.coherence);
     if (u.u_pointScale) gl.uniform1f(u.u_pointScale, opts.pointScale);
     if (u.u_form) gl.uniform1f(u.u_form, opts.form);
+    if (u.u_highlightCat) gl.uniform1f(u.u_highlightCat, opts.highlightCat);
 
     // Crossfade logic
     let crossT = 1.0;

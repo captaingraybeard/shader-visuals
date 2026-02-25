@@ -28,6 +28,7 @@ export class App {
   private intensity = 0.5;
   private coherence = 0.8;
   private form = 0;  // 0=grid/lines, 1=scattered points
+  private highlightCat = -1; // -1=none, 0-5=highlight category
   private mode: RenderMode = 'shader';
   private startTime = 0;
   private running = false;
@@ -180,8 +181,14 @@ export class App {
           dSum += depthMap[i];
         }
         const dMean = dSum / depthMap.length;
-        const segInfo = segResult.labels?.slice(0, 4).join(', ') || 'none';
-        this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | ${segCount} segments: ${segInfo}`, 10000);
+        this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | Scene segmented`, 4000);
+
+        // Show segment debug panel
+        if (segResult.labels && segResult.labels.length > 0) {
+          this.ui.showSegmentPanel(segResult.labels, (cat) => {
+            this.highlightCat = cat === null ? -1 : cat;
+          });
+        }
 
         // Step 5: Set up autonomous camera with depth info
         this.camera.setDepthMap(depthMap, w, h);
@@ -358,6 +365,7 @@ export class App {
         coherence: effectiveCoherence,
         pointScale,
         form: this.form,
+        highlightCat: this.highlightCat,
       });
     }
 

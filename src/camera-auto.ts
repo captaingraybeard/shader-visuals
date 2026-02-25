@@ -2,21 +2,21 @@
 // Audio-driven movement: bass = shake, beat = direction change, energy = speed
 
 export class AutoCamera {
-  // Look direction (camera stays near origin, looks outward at the cylinder)
-  private theta = 0;       // horizontal look angle
-  private phi = 0;         // vertical look angle
+  // Look direction — camera in front of the plane, looks at it
+  private theta = 0;       // horizontal look angle offset
+  private phi = 0;         // vertical look angle offset
   
   // Target values for smooth lerp
   private targetTheta = 0;
   private targetPhi = 0;
   
-  // Small position drift (stays near center)
+  // Camera position — starts in front of the plane
   private posX = 0;
   private posY = 0;
-  private posZ = 0;
+  private posZ = 3.0;     // in front of the plane (plane is at Z=-3 to -9)
 
-  // Orbit speed
-  private orbitSpeed = 0.08;
+  // Drift speed
+  private orbitSpeed = 0.05;
   
   // Drift phase
   private phase = 0;
@@ -44,7 +44,7 @@ export class AutoCamera {
     this.targetPhi = 0;
     this.posX = 0;
     this.posY = 0;
-    this.posZ = 0;
+    this.posZ = 3.0;
     this.phase = 0;
     this.shakeX = 0;
     this.shakeY = 0;
@@ -58,36 +58,33 @@ export class AutoCamera {
     dt = Math.min(dt, 0.05);
     this.phase += dt;
 
-    // Slow panning look — always gently looking around inside the cylinder
-    const audioSpeedBoost = 1.0 + bass * 0.5 + mid * 0.3;
-    this.targetTheta += this.orbitSpeed * dt * audioSpeedBoost;
+    // Gentle look drift — small angle changes to pan across the scene
+    const audioSpeedBoost = 1.0 + bass * 0.3 + mid * 0.2;
+    this.targetTheta = Math.sin(this.phase * 0.06) * 0.3 * audioSpeedBoost;
+    this.targetPhi = Math.sin(this.phase * 0.08 + 1.0) * 0.15;
 
-    // Gentle vertical look drift
-    this.targetPhi = Math.sin(this.phase * 0.12) * 0.3;
-
-    // Beat triggers look direction changes
+    // Beat triggers subtle look shifts
     if (beat > 0.5 && this.phase - this.lastBeatTime > 0.4) {
       this.lastBeatTime = this.phase;
-      this.orbitSpeed = -this.orbitSpeed + (Math.random() - 0.5) * 0.04;
-      if (Math.abs(this.orbitSpeed) < 0.03) {
-        this.orbitSpeed = (this.orbitSpeed >= 0 ? 1 : -1) * 0.04;
-      }
-      this.targetPhi += (Math.random() - 0.5) * 0.2;
+      this.targetTheta += (Math.random() - 0.5) * 0.15;
+      this.targetPhi += (Math.random() - 0.5) * 0.1;
     }
 
-    // Clamp vertical look (don't look straight up/down)
-    this.targetPhi = Math.max(-0.6, Math.min(0.6, this.targetPhi));
+    // Clamp look angles — don't look away from the scene
+    this.targetTheta = Math.max(-0.5, Math.min(0.5, this.targetTheta));
+    this.targetPhi = Math.max(-0.3, Math.min(0.3, this.targetPhi));
 
     // Smooth interpolation
     const lerpRate = 2.0 * dt;
     this.theta += (this.targetTheta - this.theta) * lerpRate;
     this.phi += (this.targetPhi - this.phi) * lerpRate;
 
-    // Position drift inside the sphere — enough to create real parallax
-    const driftScale = 0.8 + bass * 0.3;
-    this.posX = Math.sin(this.phase * 0.08) * driftScale;
-    this.posY = Math.sin(this.phase * 0.06) * 0.4;
-    this.posZ = Math.cos(this.phase * 0.1) * driftScale;
+    // Position drift — gentle lateral movement for parallax
+    const driftScale = 1.2 + bass * 0.4;
+    this.posX = Math.sin(this.phase * 0.07) * driftScale;
+    this.posY = Math.sin(this.phase * 0.05) * 0.5;
+    // Z drifts slightly forward/back (closer/further from scene)
+    this.posZ = 3.0 + Math.sin(this.phase * 0.04) * 1.0 + bass * 0.3;
 
     // Bass camera shake
     const shakeAmount = bass * 0.01 + beat * 0.02;
@@ -101,11 +98,10 @@ export class AutoCamera {
     const ey = this.posY + this.shakeY;
     const ez = this.posZ;
 
-    // Look direction from angles
-    const cosP = Math.cos(this.phi);
-    const tx = ex + Math.sin(this.theta) * cosP;
-    const ty = ey + Math.sin(this.phi);
-    const tz = ez - Math.cos(this.theta) * cosP;
+    // Look at the scene center (-6 Z) with angle offsets for drift
+    const tx = this.theta * 4.0;  // look offset X
+    const ty = this.phi * 3.0;    // look offset Y
+    const tz = -6.0;              // scene center depth
 
     return lookAt(ex, ey, ez, tx, ty, tz, 0, 1, 0);
   }
