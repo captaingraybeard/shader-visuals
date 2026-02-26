@@ -47,6 +47,8 @@ CAT_NAMES = ["BASS_SUBJECT", "MID_ORGANIC", "HIGH_SKY", "BEAT_GROUND", "MID_STRU
 def _label_to_category(label: str) -> int:
     """Map an ADE20K label string to one of 6 audio categories."""
     label_lower = label.lower().strip()
+    if not label_lower:
+        return 5
     if label_lower in LABEL_TO_CATEGORY:
         return LABEL_TO_CATEGORY[label_lower]
     for key, cat in LABEL_TO_CATEGORY.items():
