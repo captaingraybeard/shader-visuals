@@ -12,6 +12,7 @@ import { estimateDepth } from './depth';
 import { estimateSegments } from './segment';
 import { buildPointCloud } from './pointcloud';
 import type { ProjectionMode } from './pointcloud';
+import { generateFromServer, isServerConfigured } from './server';
 import { presets } from './presets';
 import defaultShader from '../shaders/default.frag?raw';
 import type { AudioUniforms } from './types';
@@ -152,6 +153,47 @@ export class App {
 
       this.ui.setLoading(true, this.panoramaMode ? 'Generating 360° panorama...' : 'Generating image...');
       try {
+        // Try server pipeline first (better models, faster)
+        if (isServerConfigured()) {
+          try {
+            const result = await generateFromServer(
+              prompt, _vibe, imageMode, apiKey,
+              (msg) => this.ui.setLoading(true, msg),
+            );
+
+            this.pointRenderer.setPointCloud(result.cloud);
+            this.camera.setMode(projection);
+            this.camera.resetForNewScene();
+
+            const timing = result.metadata.timing as Record<string, number> | undefined;
+            const totalSec = timing?.total_ms ? (timing.total_ms / 1000).toFixed(1) : '?';
+            this.ui.showToast(
+              `${(result.cloud.count/1000).toFixed(0)}K pts | Server ${totalSec}s`,
+              5000,
+            );
+
+            if (result.labels.length > 0) {
+              this.ui.showSegmentPanel(result.labels, (cat) => {
+                this.highlightCat = cat === null ? -1 : cat;
+              });
+            }
+
+            // Clear client-side download data (server doesn't return raw images to client yet)
+            this.lastDepthMap = null;
+            this.lastSegments = null;
+            this.lastImageDataUrl = null;
+
+            this.hasScene = true;
+            this.setMode('scene');
+            this.ui.setDownloadVisible(false); // TODO: enable when server assets are fetchable
+            return;
+          } catch (serverErr) {
+            console.warn('Server pipeline failed, falling back to client:', serverErr);
+            this.ui.setLoading(true, 'Server unavailable, running locally...');
+          }
+        }
+
+        // Client-side fallback pipeline
         // Step 1: Generate image via DALL-E 3
         const image = await generateImage(prompt, apiKey, imageMode);
 
@@ -195,14 +237,7 @@ export class App {
         this.camera.setMode(projection);
         this.camera.resetForNewScene();
 
-        // Show depth stats as toast for debugging
-        let dMin = Infinity, dMax = -Infinity, dSum = 0;
-        for (let i = 0; i < depthMap.length; i++) {
-          if (depthMap[i] < dMin) dMin = depthMap[i];
-          if (depthMap[i] > dMax) dMax = depthMap[i];
-          dSum += depthMap[i];
-        }
-        const dMean = dSum / depthMap.length;
+        // Show stats
         const isML = !segResult.labels?.some(l => l.includes('depth'));
         this.ui.showToast(`${(cloud.count/1000).toFixed(0)}K pts | ${isML ? 'ML segmented' : 'Depth-based segments'}`, 5000);
 
@@ -213,11 +248,8 @@ export class App {
           });
         }
 
-        // Step 5: Set up autonomous camera with depth info
-        // camera depth map removed — not needed with new camera system
         this.camera.resetForNewScene();
 
-        // Step 6: Switch to scene mode
         this.hasScene = true;
         this.setMode('scene');
 

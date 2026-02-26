@@ -274,8 +274,25 @@ export class UI {
 
     apiKeyGroup.appendChild(apiKeyLabel);
     apiKeyGroup.appendChild(this.apiKeyInput);
+    // Server URL input
+    const serverGroup = el('div', 'sv-apikey-group');
+    const serverLabel = el('label', 'sv-label');
+    serverLabel.textContent = 'Server URL (optional)';
+    const serverInput = el('input', 'sv-input sv-input-key') as HTMLInputElement;
+    serverInput.type = 'url';
+    serverInput.placeholder = 'http://localhost:8000';
+    serverInput.autocomplete = 'off';
+    serverInput.value = localStorage.getItem('shader-visuals-server-url') ?? '';
+    serverInput.addEventListener('input', () => {
+      const url = serverInput.value.trim().replace(/\/+$/, '');
+      localStorage.setItem('shader-visuals-server-url', url);
+    });
+    serverGroup.appendChild(serverLabel);
+    serverGroup.appendChild(serverInput);
+
     this.settingsPanel.appendChild(settingsTitle);
     this.settingsPanel.appendChild(apiKeyGroup);
+    this.settingsPanel.appendChild(serverGroup);
 
     // Assemble panel
     generateRow.appendChild(this.generateBtn);
