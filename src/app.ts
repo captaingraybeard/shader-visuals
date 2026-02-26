@@ -7,9 +7,11 @@ import { PostProcessor } from './postprocess';
 import { DMTOverlay } from './dmt';
 import { UI } from './ui';
 import { generateImage } from './imagegen';
+import type { ImageMode } from './imagegen';
 import { estimateDepth } from './depth';
 import { estimateSegments } from './segment';
 import { buildPointCloud } from './pointcloud';
+import type { ProjectionMode } from './pointcloud';
 import { presets } from './presets';
 import defaultShader from '../shaders/default.frag?raw';
 import type { AudioUniforms } from './types';
@@ -29,6 +31,7 @@ export class App {
   private coherence = 0.8;
   private form = 0;  // 0=grid/lines, 1=scattered points
   private highlightCat = -1; // -1=none, 0-5=highlight category
+  private panoramaMode = false; // equirectangular 360° mode
   private mode: RenderMode = 'shader';
   private startTime = 0;
   private running = false;
@@ -69,6 +72,7 @@ export class App {
     this.wireUI();
 
     // Load saved values
+    this.panoramaMode = localStorage.getItem('shader-visuals-panorama') === 'true';
     const savedIntensity = localStorage.getItem('shader-visuals-intensity');
     if (savedIntensity !== null) this.intensity = parseFloat(savedIntensity);
     const savedCoherence = localStorage.getItem('shader-visuals-coherence');
@@ -143,10 +147,13 @@ export class App {
       }
       const prompt = scene.trim() || 'a beautiful landscape';
 
-      this.ui.setLoading(true, 'Generating image...');
+      const imageMode: ImageMode = this.panoramaMode ? 'panorama' : 'standard';
+      const projection: ProjectionMode = this.panoramaMode ? 'equirectangular' : 'planar';
+
+      this.ui.setLoading(true, this.panoramaMode ? 'Generating 360° panorama...' : 'Generating image...');
       try {
         // Step 1: Generate image via DALL-E 3
-        const image = await generateImage(prompt, apiKey);
+        const image = await generateImage(prompt, apiKey, imageMode);
 
         // Step 2: Estimate depth
         const w = image.naturalWidth || image.width;
@@ -183,8 +190,10 @@ export class App {
 
         // Step 4: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
-        const cloud = buildPointCloud(image, depthMap, segments, segCount);
+        const cloud = buildPointCloud(image, depthMap, segments, segCount, projection);
         this.pointRenderer.setPointCloud(cloud);
+        this.camera.setMode(projection);
+        this.camera.resetForNewScene();
 
         // Show depth stats as toast for debugging
         let dMin = Infinity, dMax = -Infinity, dSum = 0;
@@ -205,7 +214,7 @@ export class App {
         }
 
         // Step 5: Set up autonomous camera with depth info
-        this.camera.setDepthMap(depthMap, w, h);
+        // camera depth map removed — not needed with new camera system
         this.camera.resetForNewScene();
 
         // Step 6: Switch to scene mode
@@ -277,6 +286,11 @@ export class App {
 
     this.ui.onCameraReset = () => {
       this.camera.reset();
+    };
+
+    this.ui.onPanoramaToggle = (enabled) => {
+      this.panoramaMode = enabled;
+      this.ui.showToast(enabled ? '360° panorama mode' : 'Standard mode', 2000);
     };
 
     this.ui.onDownload = () => {
@@ -409,6 +423,7 @@ export class App {
         pointScale,
         form: this.form,
         highlightCat: this.highlightCat,
+        projMode: this.panoramaMode ? 1 : 0,
       });
     }
 

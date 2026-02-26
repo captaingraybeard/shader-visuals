@@ -16,6 +16,7 @@ export class UI {
   onCameraReset: (() => void) | null = null;
   onFormChange: ((value: number) => void) | null = null;
   onDownload: (() => void) | null = null;
+  onPanoramaToggle: ((enabled: boolean) => void) | null = null;
 
   private overlay!: HTMLElement;
   private toastEl!: HTMLElement;
@@ -60,11 +61,25 @@ export class UI {
     this.vibeInput.placeholder = 'set the vibe...';
     this.vibeInput.autocomplete = 'off';
 
-    // Generate button
+    // Generate row: button + 360° toggle
+    const generateRow = el('div', 'sv-generate-row');
+
     this.generateBtn = el('button', 'sv-btn sv-btn-primary') as HTMLButtonElement;
     this.generateBtn.textContent = 'Generate';
     this.generateBtn.addEventListener('click', () => {
       this.onGenerate?.(this.sceneInput.value.trim(), this.vibeInput.value.trim());
+    });
+
+    const panoBtn = el('button', 'sv-btn sv-btn-pano') as HTMLButtonElement;
+    panoBtn.textContent = '360°';
+    panoBtn.title = 'Toggle 360° panorama mode';
+    let panoActive = localStorage.getItem('shader-visuals-panorama') === 'true';
+    if (panoActive) panoBtn.classList.add('sv-active');
+    panoBtn.addEventListener('click', () => {
+      panoActive = !panoActive;
+      panoBtn.classList.toggle('sv-active', panoActive);
+      localStorage.setItem('shader-visuals-panorama', String(panoActive));
+      this.onPanoramaToggle?.(panoActive);
     });
 
     // Preset buttons row
@@ -263,9 +278,12 @@ export class UI {
     this.settingsPanel.appendChild(apiKeyGroup);
 
     // Assemble panel
+    generateRow.appendChild(this.generateBtn);
+    generateRow.appendChild(panoBtn);
+
     this.panel.appendChild(this.sceneInput);
     this.panel.appendChild(this.vibeInput);
-    this.panel.appendChild(this.generateBtn);
+    this.panel.appendChild(generateRow);
     this.panel.appendChild(presetRow);
     this.panel.appendChild(sliderGroup);
     this.panel.appendChild(coherenceGroup);
@@ -672,6 +690,31 @@ const CSS = `
   opacity: 0.6;
   cursor: default;
   transform: none;
+}
+
+.sv-generate-row {
+  display: flex;
+  gap: 8px;
+}
+.sv-generate-row .sv-btn-primary {
+  flex: 1;
+}
+.sv-btn-pano {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: var(--sv-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--sv-border);
+  white-space: nowrap;
+}
+.sv-btn-pano:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+.sv-btn-pano.sv-active {
+  background: var(--sv-accent);
+  border-color: transparent;
+  box-shadow: 0 0 14px var(--sv-accent-glow);
 }
 
 /* ── Preset buttons ──────────────────────────────── */

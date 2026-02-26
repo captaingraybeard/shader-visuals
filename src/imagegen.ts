@@ -2,11 +2,16 @@
 
 const DALLE_URL = 'https://api.openai.com/v1/images/generations';
 
+export type ImageMode = 'standard' | 'panorama';
+
 export async function generateImage(
   prompt: string,
   apiKey: string,
+  mode: ImageMode = 'standard',
 ): Promise<HTMLImageElement> {
-  const enhancedPrompt = `Ultra wide panoramic view, immersive environment, highly detailed, cinematic, ${prompt}. Wide angle, showing full surrounding environment.`;
+  const enhancedPrompt = mode === 'panorama'
+    ? `360 degree equirectangular panorama projection, seamless wrap-around environment, ${prompt}. Full 360 panoramic view in equirectangular format, no visible seams at edges, continuous horizon.`
+    : `Ultra wide panoramic view, immersive environment, highly detailed, cinematic, ${prompt}. Wide angle, showing full surrounding environment.`;
 
   const res = await fetch(DALLE_URL, {
     method: 'POST',

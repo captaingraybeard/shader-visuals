@@ -29,6 +29,7 @@ uniform float u_pointScale;
 uniform float u_transition;
 uniform float u_form;
 uniform float u_highlightCat; // -1 = none, 0-5 = highlight this category
+uniform float u_projMode;    // 0 = planar, 1 = equirectangular sphere
 
 out vec3 v_color;
 out float v_alpha;
@@ -42,9 +43,16 @@ void main() {
   float idx = float(gl_VertexID);
   vec3 pos = a_position;
 
-  // Depth: Z coordinate. Close = -3 (DEPTH_OFFSET), Far = -9 (DEPTH_OFFSET - DEPTH_RANGE)
-  float depthFactor = clamp((-a_position.z - 3.0) / 6.0, 0.0, 1.0);
-  depthFactor = 1.0 - depthFactor; // 1=close, 0=far
+  // Depth factor: 1=close, 0=far
+  float depthFactor;
+  if (u_projMode > 0.5) {
+    // Sphere mode: depth = distance from origin. Larger radius = closer to camera
+    float radius = length(a_position);
+    depthFactor = clamp((radius - 6.0) / 4.0, 0.0, 1.0); // 6=far, 10=close
+  } else {
+    // Planar mode: Z coordinate. Close = -3, Far = -9
+    depthFactor = 1.0 - clamp((-a_position.z - 3.0) / 6.0, 0.0, 1.0);
+  }
 
   float h1 = hash(idx);
   float h2 = hash(idx + 1000.0);
@@ -59,8 +67,15 @@ void main() {
   vec3 displacement = vec3(0.0);
   vec3 colorTint = vec3(0.0);
   float sizeBoost = 0.0;
-  // Direction for displacement: toward camera (+Z direction)
-  vec3 dir = vec3(0.0, 0.0, 1.0);
+  // Direction for displacement: toward camera
+  vec3 dir;
+  if (u_projMode > 0.5) {
+    // Sphere: radial direction (outward from center)
+    dir = normalize(a_position);
+  } else {
+    // Planar: toward camera (+Z)
+    dir = vec3(0.0, 0.0, 1.0);
+  }
   float t = u_time;
 
   // Cat 0: BASS_SUBJECT — people, animals → deep breathing pulse with bass
@@ -151,7 +166,7 @@ void main() {
   pos += scatter;
 
   // ── Global beat ripple (subtle, on top of per-category) ──
-  float zDist = -a_position.z; // distance from camera
+  float zDist = u_projMode > 0.5 ? length(a_position) : -a_position.z;
   float ripplePhase = zDist - t * 4.0;
   float gRipple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
   pos += dir * gRipple * u_beat * 0.12;
@@ -296,6 +311,7 @@ export class PointCloudRenderer {
       'u_high', 'u_beat', 'u_coherence', 'u_pointScale', 'u_transition', 'u_form', 'u_highlightCat',
       'u_band0', 'u_band1', 'u_band2', 'u_band3',
       'u_band4', 'u_band5', 'u_band6', 'u_band7',
+      'u_projMode',
     ];
     for (const n of names) {
       this.uniforms[n] = gl.getUniformLocation(prog, n);
@@ -375,6 +391,7 @@ export class PointCloudRenderer {
     pointScale: number;
     form: number;
     highlightCat: number;
+    projMode: number; // 0=planar, 1=equirectangular
   }): void {
     const gl = this.gl;
     if (!gl || !this.program) return;
@@ -408,6 +425,7 @@ export class PointCloudRenderer {
     // Must always set — GLSL defaults to 0.0 which would highlight cat 0
     const hlLoc = u.u_highlightCat;
     if (hlLoc !== null) gl.uniform1f(hlLoc, opts.highlightCat);
+    if (u.u_projMode) gl.uniform1f(u.u_projMode, opts.projMode);
 
     // Crossfade logic
     let crossT = 1.0;
