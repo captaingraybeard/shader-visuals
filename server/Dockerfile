@@ -4,7 +4,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install Python deps (torch already in base image)
+# Install Python deps (torch already in base image, will be upgraded to 2.7+)
 COPY server/requirements-runpod.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -12,8 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server/ server/
 
 # Models download at first cold start via HuggingFace cache.
-# RunPod caches HF models across workers automatically.
-# Set HF_HOME so models persist in the right spot.
+# HF_TOKEN must be set as env var in RunPod for gated models (SAM3).
 ENV HF_HOME=/app/models
 
 CMD ["python3.11", "-u", "server/handler.py"]
