@@ -41,8 +41,10 @@ export class App {
   // Current scene data for both renderers
   private hasScene = false;
   private lastImageDataUrl: string | null = null;
-  private lastDepthDataUrl: string | null = null;
-  private lastSegmentDataUrl: string | null = null;
+  private lastDepthMap: Float32Array | null = null;
+  private lastSegments: Uint8Array | null = null;
+  private lastImageW = 0;
+  private lastImageH = 0;
 
   constructor() {
     this.audio = new AudioEngine();
@@ -164,8 +166,9 @@ export class App {
           (msg) => this.ui.setLoading(true, msg),
         );
 
-        // Save depth map as grayscale image for download
-        this.lastDepthDataUrl = depthToDataUrl(depthMap, w, h);
+        this.lastDepthMap = depthMap;
+        this.lastImageW = w;
+        this.lastImageH = h;
 
         // Step 3: Segment the scene
         this.ui.setLoading(true, 'Segmenting scene...');
@@ -176,8 +179,7 @@ export class App {
         );
         const { segments, count: segCount } = segResult;
 
-        // Save segment map as colored image for download
-        this.lastSegmentDataUrl = segmentToDataUrl(segments, w, h);
+        this.lastSegments = segments;
 
         // Step 4: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
@@ -283,6 +285,8 @@ export class App {
         return;
       }
       const ts = Date.now();
+      const w = this.lastImageW;
+      const h = this.lastImageH;
       const download = (url: string, name: string) => {
         const a = document.createElement('a');
         a.href = url;
@@ -290,11 +294,15 @@ export class App {
         a.click();
       };
       download(this.lastImageDataUrl, `scene-${ts}.png`);
-      if (this.lastDepthDataUrl) {
-        setTimeout(() => download(this.lastDepthDataUrl!, `depth-${ts}.png`), 300);
+      if (this.lastDepthMap) {
+        setTimeout(() => {
+          download(depthToDataUrl(this.lastDepthMap!, w, h), `depth-${ts}.png`);
+        }, 300);
       }
-      if (this.lastSegmentDataUrl) {
-        setTimeout(() => download(this.lastSegmentDataUrl!, `segments-${ts}.png`), 600);
+      if (this.lastSegments) {
+        setTimeout(() => {
+          download(segmentToDataUrl(this.lastSegments!, w, h), `segments-${ts}.png`);
+        }, 600);
       }
       this.ui.showToast('Saving scene + depth + segments', 2000);
     };

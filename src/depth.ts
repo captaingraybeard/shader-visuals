@@ -66,7 +66,7 @@ export async function estimateDepth(
 
       onStatus?.('Estimating depth (tiled)...');
 
-      // We need to tile the image for higher resolution depth.
+      // We tile the image for higher resolution depth.
       // The model internally processes at ~518×518. By feeding it smaller crops,
       // each crop gets more detail per pixel.
       
@@ -161,6 +161,15 @@ export async function estimateDepth(
         if (fullDepth[i] > gMax) gMax = fullDepth[i];
       }
       const gRange = gMax - gMin || 1;
+      console.log(`[depth] tiled: ${totalTiles} tiles, range ${gMin.toFixed(3)}-${gMax.toFixed(3)}`);
+
+      // If image and target are same size, write directly to avoid extra alloc
+      if (imgW === width && imgH === height) {
+        for (let i = 0; i < fullDepth.length; i++) {
+          fullDepth[i] = (fullDepth[i] - gMin) / gRange;
+        }
+        return fullDepth;
+      }
 
       // Resize from imgW×imgH to target width×height with bilinear interpolation
       const depth = new Float32Array(width * height);
@@ -173,6 +182,7 @@ export async function estimateDepth(
         }
       }
 
+      console.log(`[depth] output: ${width}x${height}, sample mid=${depth[Math.floor(depth.length/2)].toFixed(3)}`);
       return depth;
     } catch (e) {
       console.warn('Depth estimation failed, falling back to radial gradient:', e);
