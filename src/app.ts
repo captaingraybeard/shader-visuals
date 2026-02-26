@@ -41,6 +41,8 @@ export class App {
   // Current scene data for both renderers
   private hasScene = false;
   private lastImageDataUrl: string | null = null;
+  private lastDepthDataUrl: string | null = null;
+  private lastSegmentDataUrl: string | null = null;
 
   constructor() {
     this.audio = new AudioEngine();
@@ -162,6 +164,9 @@ export class App {
           (msg) => this.ui.setLoading(true, msg),
         );
 
+        // Save depth map as grayscale image for download
+        this.lastDepthDataUrl = depthToDataUrl(depthMap, w, h);
+
         // Step 3: Segment the scene
         this.ui.setLoading(true, 'Segmenting scene...');
         const segResult = await estimateSegments(
@@ -170,6 +175,9 @@ export class App {
           depthMap,
         );
         const { segments, count: segCount } = segResult;
+
+        // Save segment map as colored image for download
+        this.lastSegmentDataUrl = segmentToDataUrl(segments, w, h);
 
         // Step 4: Build point cloud (primary scene representation)
         this.ui.setLoading(true, 'Building point cloud...');
@@ -274,11 +282,21 @@ export class App {
         this.ui.showToast('No image generated yet', 2000);
         return;
       }
-      const a = document.createElement('a');
-      a.href = this.lastImageDataUrl;
-      a.download = `shader-visuals-${Date.now()}.png`;
-      a.click();
-      this.ui.showToast('Image saved', 2000);
+      const ts = Date.now();
+      const download = (url: string, name: string) => {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+      };
+      download(this.lastImageDataUrl, `scene-${ts}.png`);
+      if (this.lastDepthDataUrl) {
+        setTimeout(() => download(this.lastDepthDataUrl!, `depth-${ts}.png`), 300);
+      }
+      if (this.lastSegmentDataUrl) {
+        setTimeout(() => download(this.lastSegmentDataUrl!, `segments-${ts}.png`), 600);
+      }
+      this.ui.showToast('Saving scene + depth + segments', 2000);
     };
   }
 
@@ -422,4 +440,49 @@ export class App {
       }
     }
   }
+}
+
+// ── Helpers for download visualizations ──────────────
+
+const SEG_COLORS = [
+  [255, 107, 107], // cat 0 BASS_SUBJECT — red
+  [81, 207, 102],  // cat 1 MID_ORGANIC — green
+  [116, 192, 252], // cat 2 HIGH_SKY — blue
+  [255, 212, 59],  // cat 3 BEAT_GROUND — yellow
+  [177, 151, 252], // cat 4 MID_STRUCTURE — purple
+  [134, 142, 150], // cat 5 LOW_AMBIENT — gray
+];
+
+function depthToDataUrl(depthMap: Float32Array, w: number, h: number): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  const imgData = ctx.createImageData(w, h);
+  for (let i = 0; i < depthMap.length; i++) {
+    const v = Math.round(depthMap[i] * 255);
+    imgData.data[i * 4] = v;
+    imgData.data[i * 4 + 1] = v;
+    imgData.data[i * 4 + 2] = v;
+    imgData.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+function segmentToDataUrl(segments: Uint8Array, w: number, h: number): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  const imgData = ctx.createImageData(w, h);
+  for (let i = 0; i < segments.length; i++) {
+    const c = SEG_COLORS[segments[i]] || [128, 128, 128];
+    imgData.data[i * 4] = c[0];
+    imgData.data[i * 4 + 1] = c[1];
+    imgData.data[i * 4 + 2] = c[2];
+    imgData.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL('image/png');
 }
