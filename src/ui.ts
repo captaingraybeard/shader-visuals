@@ -274,8 +274,26 @@ export class UI {
 
     apiKeyGroup.appendChild(apiKeyLabel);
     apiKeyGroup.appendChild(this.apiKeyInput);
+
+    // RunPod API Key
+    const runpodGroup = el('div', 'sv-apikey-group');
+    const runpodLabel = el('label', 'sv-label');
+    runpodLabel.textContent = 'RunPod API Key';
+    const runpodInput = el('input', 'sv-input sv-input-key') as HTMLInputElement;
+    runpodInput.type = 'password';
+    runpodInput.placeholder = 'rp_...';
+    runpodInput.autocomplete = 'off';
+    runpodInput.value = localStorage.getItem('shader-visuals-runpod-key') ?? '';
+    runpodInput.addEventListener('input', () => {
+      localStorage.setItem('shader-visuals-runpod-key', runpodInput.value.trim());
+      this.resetAutoHide();
+    });
+    runpodGroup.appendChild(runpodLabel);
+    runpodGroup.appendChild(runpodInput);
+
     this.settingsPanel.appendChild(settingsTitle);
     this.settingsPanel.appendChild(apiKeyGroup);
+    this.settingsPanel.appendChild(runpodGroup);
 
     // Assemble panel
     generateRow.appendChild(this.generateBtn);

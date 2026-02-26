@@ -1,0 +1,11 @@
+runpod
+fastapi
+uvicorn[standard]
+torch
+torchvision
+transformers
+numpy
+Pillow
+httpx
+pydantic-settings
+scipy
