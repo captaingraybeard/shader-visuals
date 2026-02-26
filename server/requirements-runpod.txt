@@ -10,4 +10,10 @@ httpx
 pydantic-settings
 scipy
 einops
+decord
+opencv-python-headless
+pycocotools
+scikit-image
+scikit-learn
+triton
 sam3 @ git+https://github.com/facebookresearch/sam3.git
