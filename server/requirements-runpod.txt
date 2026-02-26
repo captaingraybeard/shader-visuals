@@ -1,8 +1,6 @@
 runpod
 fastapi
 uvicorn[standard]
-torch
-torchvision
 transformers
 numpy
 Pillow

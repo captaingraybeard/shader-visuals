@@ -14,7 +14,7 @@ import { CATEGORY_COUNT } from './segment';
  * RUNPOD_ENDPOINT_ID is set after deploying the serverless endpoint.
  * The API key is stored in localStorage alongside the OpenAI key.
  */
-const RUNPOD_ENDPOINT_ID = ''; // TODO: set after deployment
+const RUNPOD_ENDPOINT_ID = 'b5b89a00-3752-4d85-bab1-695c7d1d811d';
 const RUNPOD_BASE = RUNPOD_ENDPOINT_ID
   ? `https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}`
   : '';
