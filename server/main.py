@@ -7,7 +7,7 @@ from fastapi.responses import Response, FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from .config import settings
-from .models import get_loaded_models
+from .models import get_loaded_models, load_all_models
 from .pipeline import run_pipeline
 from .storage import get_generation, get_asset_path
 
@@ -22,6 +22,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup():
+    load_all_models()
 
 
 class GenerateRequest(BaseModel):

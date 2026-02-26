@@ -9,18 +9,18 @@
 import type { PointCloudData, ProjectionMode } from './pointcloud';
 import { CATEGORY_COUNT } from './segment';
 
-const SERVER_URL_KEY = 'shader-visuals-server-url';
+/**
+ * Server URL — hardcoded config. Change this when deploying behind a tunnel/VPS.
+ * Empty string = server disabled, client-side fallback only.
+ */
+const SERVER_URL = 'http://localhost:8000';
 
 export function getServerUrl(): string {
-  return localStorage.getItem(SERVER_URL_KEY) || '';
-}
-
-export function setServerUrl(url: string): void {
-  localStorage.setItem(SERVER_URL_KEY, url.replace(/\/+$/, ''));
+  return SERVER_URL;
 }
 
 export function isServerConfigured(): boolean {
-  return getServerUrl().length > 0;
+  return SERVER_URL.length > 0;
 }
 
 export interface ServerResult {

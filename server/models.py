@@ -70,6 +70,16 @@ def get_sam2_model():
     return _sam2_model if _sam2_model != "failed" else None
 
 
+def load_all_models():
+    """Eagerly load all configured models at startup."""
+    log.info("Loading all models...")
+    get_depth_pipeline()
+    get_segmentation_pipeline()
+    if settings.SEG_MODEL == "sam2":
+        get_sam2_model()
+    log.info("All models loaded.")
+
+
 def get_loaded_models() -> dict:
     """Return status of loaded models."""
     return {
