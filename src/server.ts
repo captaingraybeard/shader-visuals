@@ -13,7 +13,7 @@ import { CATEGORY_COUNT } from './segment';
  * Server URL — hardcoded config. Change this when deploying behind a tunnel/VPS.
  * Empty string = server disabled, client-side fallback only.
  */
-const SERVER_URL = 'http://localhost:8000';
+const SERVER_URL = 'https://interpreted-former-throw-let.trycloudflare.com';
 
 export function getServerUrl(): string {
   return SERVER_URL;
