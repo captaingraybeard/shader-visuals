@@ -44,11 +44,17 @@ export async function generateFromServer(
 
   onStatus?.('Sending to server...');
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min
+
   const resp = await fetch(`${serverUrl}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, vibe, mode, api_key: apiKey }),
+    signal: controller.signal,
   });
+
+  clearTimeout(timeout);
 
   if (!resp.ok) {
     const text = await resp.text();

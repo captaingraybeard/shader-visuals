@@ -1,0 +1,22 @@
+{
+  "prompt": "Jungle cats",
+  "vibe": "Spooky",
+  "mode": "panorama",
+  "width": 1792,
+  "height": 1024,
+  "point_count": 1835008,
+  "projection": "equirectangular",
+  "segments_detected": [
+    "tree\u2192cat1(64.3%)",
+    "water\u2192cat3(34.5%)",
+    "rock, stone\u2192cat3(0.8%)",
+    "person\u2192cat0(0.4%)"
+  ],
+  "timing": {
+    "image_gen_ms": 31507,
+    "depth_ms": 71833,
+    "segmentation_ms": 71833,
+    "pointcloud_ms": 276
+  },
+  "generation_id": "7d281840-708f-4e8a-b145-2e0e02163951"
+}
