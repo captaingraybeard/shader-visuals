@@ -1,5 +1,11 @@
 """RunPod serverless handler — wraps the shader-visuals ML pipeline."""
 
+import sys
+import os
+
+# Add parent dir to path so `server` package is importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import runpod
 import asyncio
 import base64
@@ -31,11 +37,10 @@ def handler(job):
         "mode": "standard" | "panorama" (optional),
         "api_key": str (OpenAI key)
     }
-    
+
     Returns:
     {
-        "pointcloud_b64": str (base64-encoded binary: [4B header_len][JSON header][packed cloud]),
-        "metadata": dict
+        "pointcloud_b64": str (base64-encoded binary),
     }
     """
     from server.pipeline import run_pipeline
@@ -52,15 +57,15 @@ def handler(job):
         return {"error": "No OpenAI API key provided"}
 
     try:
-        # Run the async pipeline
-        result_bytes = asyncio.get_event_loop().run_until_complete(
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result_bytes = loop.run_until_complete(
             run_pipeline(prompt=prompt, api_key=api_key, mode=mode, vibe=vibe)
         )
     except Exception as e:
         log.exception("Pipeline error")
         return {"error": str(e)}
 
-    # Base64 encode the binary response for JSON transport
     b64_data = base64.b64encode(result_bytes).decode("ascii")
 
     return {
