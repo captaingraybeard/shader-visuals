@@ -107,12 +107,12 @@ export async function estimateSegments(
   if (!modelFailed) {
     try {
       if (!segModel || !segProcessor) {
-        onStatus?.('Loading segmentation model...');
+        onStatus?.('Loading segmentation model (~60MB)...');
         segProcessor = await AutoProcessor.from_pretrained(
-          'Xenova/segformer-b0-finetuned-ade-512-512',
+          'Xenova/segformer-b4-finetuned-ade-512-512',
         );
         segModel = await SegformerForSemanticSegmentation.from_pretrained(
-          'Xenova/segformer-b0-finetuned-ade-512-512',
+          'Xenova/segformer-b4-finetuned-ade-512-512',
           { quantized: true },
         );
       }
@@ -122,29 +122,63 @@ export async function estimateSegments(
       // Load image
       const img = await RawImage.fromURL(imageUrl);
 
-      // Run model
-      const inputs = await segProcessor(img);
-      const output = await segModel(inputs);
+      // Tile the image into overlapping 512×512 crops for higher effective resolution
+      // Model outputs 128×128 per tile; stitching gives us ~4× better coverage
+      const TILE = 512;
+      const imgW = img.width;
+      const imgH = img.height;
 
-      // output.logits: [1, 150, H, W] — take argmax across class dim
-      const logits = output.logits;
-      const [, numClasses, outH, outW] = logits.dims;
-      const logitData = logits.data as Float32Array;
+      // Calculate tile grid
+      const tilesX = Math.max(1, Math.ceil(imgW / TILE));
+      const tilesY = Math.max(1, Math.ceil(imgH / TILE));
 
-      // Argmax per pixel at model resolution
-      const classMap = new Uint8Array(outH * outW);
-      for (let y = 0; y < outH; y++) {
-        for (let x = 0; x < outW; x++) {
-          let maxVal = -Infinity;
-          let maxIdx = 0;
-          for (let c = 0; c < numClasses; c++) {
-            const val = logitData[c * outH * outW + y * outW + x];
-            if (val > maxVal) {
-              maxVal = val;
-              maxIdx = c;
+      // Full-res class map at image resolution
+      const classMap = new Uint8Array(imgW * imgH);
+
+      let tileNum = 0;
+      const totalTiles = tilesX * tilesY;
+
+      for (let ty = 0; ty < tilesY; ty++) {
+        for (let tx = 0; tx < tilesX; tx++) {
+          tileNum++;
+          onStatus?.(`Segmenting tile ${tileNum}/${totalTiles}...`);
+
+          // Tile bounds (clamp to image edges)
+          const x0 = Math.min(tx * TILE, imgW - TILE);
+          const y0 = Math.min(ty * TILE, imgH - TILE);
+          const cropW = Math.min(TILE, imgW - x0);
+          const cropH = Math.min(TILE, imgH - y0);
+
+          // Crop the tile (RawImage.crop is async, takes [x_min, y_min, x_max, y_max])
+          const tile = await (img as any).crop([x0, y0, x0 + cropW, y0 + cropH]);
+
+          // Run model on tile
+          const inputs = await segProcessor(tile);
+          const output = await segModel(inputs);
+
+          const logits = output.logits;
+          const [, numClasses, outH, outW] = logits.dims;
+          const logitData = logits.data as Float32Array;
+
+          // Argmax per pixel and write into full class map
+          for (let py = 0; py < cropH; py++) {
+            for (let px = 0; px < cropW; px++) {
+              const sx = Math.min(Math.floor((px / cropW) * outW), outW - 1);
+              const sy = Math.min(Math.floor((py / cropH) * outH), outH - 1);
+
+              let maxVal = -Infinity;
+              let maxIdx = 0;
+              for (let c = 0; c < numClasses; c++) {
+                const val = logitData[c * outH * outW + sy * outW + sx];
+                if (val > maxVal) {
+                  maxVal = val;
+                  maxIdx = c;
+                }
+              }
+
+              classMap[(y0 + py) * imgW + (x0 + px)] = maxIdx;
             }
           }
-          classMap[y * outW + x] = maxIdx;
         }
       }
 
@@ -154,13 +188,14 @@ export async function estimateSegments(
         classCounts.set(classMap[i], (classCounts.get(classMap[i]) || 0) + 1);
       }
 
-      // Map classes to audio categories and resize to target dimensions
+      // Map classes to audio categories — classMap is already at image resolution
+      // Just resize from imgW×imgH to target width×height if different
       const segments = new Uint8Array(width * height);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          const sx = Math.min(Math.floor((x / width) * outW), outW - 1);
-          const sy = Math.min(Math.floor((y / height) * outH), outH - 1);
-          const classIdx = classMap[sy * outW + sx];
+          const sx = Math.min(Math.floor((x / width) * imgW), imgW - 1);
+          const sy = Math.min(Math.floor((y / height) * imgH), imgH - 1);
+          const classIdx = classMap[sy * imgW + sx];
           segments[y * width + x] = ADE20K_CLASS_TO_CATEGORY[classIdx] ?? 5;
         }
       }
