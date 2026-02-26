@@ -37,8 +37,10 @@ def build_point_cloud(
         )
 
     if mode == "panorama":
-        # Equirectangular → sphere
-        # lon: 0..2π across width, lat: 0..π across height
+        # Equirectangular → sphere (matches client: BASE_RADIUS=10, DEPTH_RANGE=4)
+        BASE_RADIUS = 10.0
+        DEPTH_RANGE = 4.0
+        
         u = np.linspace(0, 1, w, dtype=np.float32)
         v = np.linspace(0, 1, h, dtype=np.float32)
         uu, vv = np.meshgrid(u, v)  # H x W
@@ -46,20 +48,28 @@ def build_point_cloud(
         lon = uu * 2.0 * np.pi  # 0..2π
         lat = vv * np.pi         # 0..π
 
-        r = depth * 9.0 + 1.0  # depth → radius (1..10)
+        # Close objects push outward (larger radius), far stay at base
+        r = BASE_RADIUS - (1.0 - depth) * DEPTH_RANGE
 
-        x = (r * np.sin(lat) * np.cos(lon)).astype(np.float32)
-        y = (r * np.cos(lat)).astype(np.float32)
-        z = (r * np.sin(lat) * np.sin(lon)).astype(np.float32)
+        sin_lat = np.sin(lat)
+        cos_lat = np.cos(lat)
+        x = (r * sin_lat * np.sin(lon)).astype(np.float32)
+        y = (r * cos_lat).astype(np.float32)
+        z = (r * sin_lat * np.cos(lon)).astype(np.float32)
     else:
-        # Planar projection
-        u = np.linspace(-1, 1, w, dtype=np.float32)
-        v = np.linspace(-1, 1, h, dtype=np.float32)
+        # Planar projection (matches client: PLANE_WIDTH=8, DEPTH_RANGE=6, DEPTH_OFFSET=-3)
+        PLANE_WIDTH = 8.0
+        DEPTH_RANGE = 6.0
+        DEPTH_OFFSET = -3.0
+        
+        aspect = h / w
+        u = np.linspace(-0.5, 0.5, w, dtype=np.float32)
+        v = np.linspace(0.5, -0.5, h, dtype=np.float32)  # flip Y: +Y up
         xx, yy = np.meshgrid(u, v)
 
-        x = xx
-        y = -yy  # flip Y
-        z = (depth * 2.0 - 1.0).astype(np.float32)  # depth → Z (-1..1)
+        x = (xx * PLANE_WIDTH).astype(np.float32)
+        y = (yy * PLANE_WIDTH * aspect).astype(np.float32)
+        z = (DEPTH_OFFSET - (1.0 - depth) * DEPTH_RANGE).astype(np.float32)
 
     # Flatten everything
     point_count = h * w

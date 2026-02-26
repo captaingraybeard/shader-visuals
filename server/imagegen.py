@@ -28,12 +28,13 @@ async def generate_image(
         full_prompt = PANORAMA_PREFIX + prompt
         if vibe:
             full_prompt += f" Mood/vibe: {vibe}."
+        full_prompt += " Ultra wide, highly detailed, cinematic."
         size = "1792x1024"
     else:
-        full_prompt = prompt
+        full_prompt = f"Ultra wide panoramic view, immersive environment, highly detailed, cinematic, {prompt}. Wide angle, showing full surrounding environment."
         if vibe:
             full_prompt += f" Mood/vibe: {vibe}."
-        size = "1024x1024"
+        size = "1792x1024"
 
     log.info(f"Generating image: mode={mode}, size={size}")
 
