@@ -70,8 +70,9 @@ def estimate_depth(image: Image.Image) -> np.ndarray:
     # Process tiles in parallel
     tile_images = [image.crop((x1, y1, x2, y2)) for x1, y1, x2, y2 in tiles]
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        tile_depths = list(pool.map(lambda t: _process_tile(pipe, t), tile_images))
+    # Serialize on GPU (concurrent inference causes CUDA OOM/race conditions)
+    # GPU is fast enough that parallelism isn't needed
+    tile_depths = [_process_tile(pipe, t) for t in tile_images]
 
     # Blend tiles
     accumulated = np.zeros((h, w), dtype=np.float32)
