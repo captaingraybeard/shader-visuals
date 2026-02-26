@@ -1,0 +1,23 @@
+{
+  "name": "Shader Visuals",
+  "short_name": "Shaders",
+  "description": "Audio-reactive shader visualizer",
+  "start_url": "/shader-visuals/",
+  "scope": "/shader-visuals/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/shader-visuals/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/shader-visuals/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
