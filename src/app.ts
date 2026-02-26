@@ -40,6 +40,7 @@ export class App {
 
   // Current scene data for both renderers
   private hasScene = false;
+  private lastImageDataUrl: string | null = null;
 
   constructor() {
     this.audio = new AudioEngine();
@@ -154,6 +155,8 @@ export class App {
         depthCtx.drawImage(image, 0, 0, w, h);
         const imageDataUrl = depthCanvas.toDataURL('image/jpeg', 0.9);
 
+        this.lastImageDataUrl = depthCanvas.toDataURL('image/png');
+
         const depthMap = await estimateDepth(
           imageDataUrl, w, h,
           (msg) => this.ui.setLoading(true, msg),
@@ -199,6 +202,7 @@ export class App {
         this.hasScene = true;
         this.setMode('scene');
 
+        this.ui.setDownloadVisible(true);
         this.ui.showToast('Scene ready', 2000);
       } catch (e) {
         this.ui.showToast(`Failed: ${(e as Error).message}`, 4000);
@@ -263,6 +267,18 @@ export class App {
 
     this.ui.onCameraReset = () => {
       this.camera.reset();
+    };
+
+    this.ui.onDownload = () => {
+      if (!this.lastImageDataUrl) {
+        this.ui.showToast('No image generated yet', 2000);
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = this.lastImageDataUrl;
+      a.download = `shader-visuals-${Date.now()}.png`;
+      a.click();
+      this.ui.showToast('Image saved', 2000);
     };
   }
 
