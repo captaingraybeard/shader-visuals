@@ -9,4 +9,5 @@ Pillow
 httpx
 pydantic-settings
 scipy
+einops
 sam3 @ git+https://github.com/facebookresearch/sam3.git
