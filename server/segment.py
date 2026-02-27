@@ -37,14 +37,20 @@ def _load_sam3():
     return _sam3_model, _sam3_processor
 
 
-def segment_image(image: Image.Image) -> tuple[np.ndarray, list[dict]]:
+def segment_image(
+    image: Image.Image,
+    dynamic_prompts: dict[int, list[str]] | None = None,
+) -> tuple[np.ndarray, list[dict]]:
     """
     Run SAM3 text-prompted segmentation.
-    For each audio category, prompt SAM3 with relevant concepts.
+    If dynamic_prompts provided, use those instead of static CATEGORY_PROMPTS.
     Returns (segment_map uint8 HxW, detected_segments list of dicts).
     """
     model, processor = _load_sam3()
     w, h = image.size
+
+    active_prompts = dynamic_prompts if dynamic_prompts else CATEGORY_PROMPTS
+    log.info(f"Segmenting with {'dynamic' if dynamic_prompts else 'static'} prompts")
 
     # Default to ambient (category 5)
     segment_map = np.full((h, w), 5, dtype=np.uint8)
@@ -53,12 +59,9 @@ def segment_image(image: Image.Image) -> tuple[np.ndarray, list[dict]]:
     # Set image once
     inference_state = processor.set_image(image)
 
-    # Track pixel coverage per category for priority painting
     # Lower category numbers paint last (higher priority — subjects > ambient)
-    category_masks = {}
-
-    for cat_id in sorted(CATEGORY_PROMPTS.keys(), reverse=True):
-        prompts = CATEGORY_PROMPTS[cat_id]
+    for cat_id in sorted(active_prompts.keys(), reverse=True):
+        prompts = active_prompts[cat_id]
         cat_pixel_count = 0
 
         for prompt_text in prompts:
