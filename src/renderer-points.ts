@@ -61,96 +61,116 @@ void main() {
   // Decode audio category from normalized segment value (0-1 → 0-5)
   int cat = int(a_segment * 5.0 + 0.5);
 
+  // ── MASS MODEL ──
+  // Heavy objects resist movement (anchors), light objects flow freely
+  // Mass also increases with proximity (foreground = more solid)
+  float baseMass = 1.0;
+  if (cat == 0) baseMass = 5.0;       // BASS_SUBJECT: tigers, people — heavy, solid
+  else if (cat == 1) baseMass = 1.5;   // MID_ORGANIC: trees, plants — medium, sways
+  else if (cat == 2) baseMass = 0.3;   // HIGH_SKY: sky, clouds, fog — light, flows
+  else if (cat == 3) baseMass = 8.0;   // BEAT_GROUND: ground, rocks — very heavy, anchors scene
+  else if (cat == 4) baseMass = 4.0;   // MID_STRUCTURE: buildings, trunks — heavy, vibrates
+  else baseMass = 0.5;                 // LOW_AMBIENT: shadows, mist — light, drifts
+
+  // Depth adds mass: close objects feel more solid
+  float mass = baseMass * (0.6 + depthFactor * 0.8);
+  float invMass = 1.0 / mass; // displacement multiplier
+
   // ── Per-category audio energy ──
-  // Each category listens to specific bands with distinct behavior
-  float energy = 0.0;      // how much this object is "activated" by audio
+  float energy = 0.0;
   vec3 displacement = vec3(0.0);
   vec3 colorTint = vec3(0.0);
   float sizeBoost = 0.0;
+
   // Direction for displacement: toward camera
   vec3 dir;
   if (u_projMode > 0.5) {
-    // Sphere: radial direction (outward from center)
     dir = normalize(a_position);
   } else {
-    // Planar: toward camera (+Z)
     dir = vec3(0.0, 0.0, 1.0);
   }
   float t = u_time;
 
-  // Cat 0: BASS_SUBJECT — people, animals → deep breathing pulse with bass
+  // ── SPATIAL WAVE FUNCTIONS ──
+  // All displacement uses position-based waves (NOT per-vertex random hash).
+  // Neighboring pixels get similar values = coherent motion = visible waves.
+
+  // Cat 0: BASS_SUBJECT — deep, slow breathing pulse (barely moves due to high mass)
   if (cat == 0) {
     energy = u_band0 * 0.6 + u_band1 * 0.4;
-    // Slow, powerful inhale/exhale — expand outward with bass
-    displacement = dir * energy * 0.35;
-    // Subtle warm glow on bass hits
+    // Uniform breathing — whole object expands/contracts together
+    float breath = sin(t * 1.5) * 0.5 + 0.5; // slow pulse
+    displacement = dir * energy * breath * 0.3;
     colorTint = vec3(0.15, 0.05, 0.0) * energy;
-    sizeBoost = energy * 4.0;
+    sizeBoost = energy * 2.0;
   }
-  // Cat 1: MID_ORGANIC — trees, plants → swaying with melody
+  // Cat 1: MID_ORGANIC — spatial wave sway (trees move as groups)
   else if (cat == 1) {
     energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
-    // Organic swaying — sideways + vertical wave
-    float sway = sin(pos.y * 2.0 + t * 2.0) * energy * 0.25;
-    float wave = cos(pos.x * 1.5 + t * 1.8) * energy * 0.15;
-    displacement = vec3(sway, wave * 0.5, sway * 0.3);
-    // Green tint intensifies with mids
+    // Low-frequency spatial waves — neighbors move together
+    float swayX = sin(pos.y * 1.5 + pos.x * 0.3 + t * 2.0) * energy * 0.3;
+    float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.15;
+    float swayZ = sin(pos.y * 0.8 + t * 2.4) * energy * 0.1;
+    displacement = vec3(swayX, swayY, swayZ);
     colorTint = vec3(-0.02, 0.12, 0.02) * energy;
-    sizeBoost = energy * 2.0;
-  }
-  // Cat 2: HIGH_SKY — sky, clouds, light → shimmer and sparkle with highs
-  else if (cat == 2) {
-    energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
-    // Sparkle: rapid tiny displacement, like glitter
-    float sparkle = sin(idx * 0.3 + t * 12.0) * energy * 0.15;
-    displacement = vec3(sparkle * h1, sparkle * h2, sparkle * h3);
-    // Bright white/blue shimmer
-    float flash = sin(idx * 0.7 + t * 15.0) * 0.5 + 0.5;
-    colorTint = vec3(0.1, 0.12, 0.2) * energy * flash;
     sizeBoost = energy * 1.5;
   }
-  // Cat 3: BEAT_GROUND — ground, water, terrain → beat-reactive ripple/impact
-  else if (cat == 3) {
-    energy = u_beat * 0.7 + u_band0 * 0.3;
-    // Impact ripple — radiates outward from center on beats
-    float rippleDist = length(pos.xz);
-    float ripple = sin(rippleDist * 6.0 - t * 8.0) * energy * 0.2;
-    displacement = vec3(0.0, ripple, 0.0);
-    // Flash of warm light on impact
-    colorTint = vec3(0.12, 0.08, 0.0) * u_beat;
-    sizeBoost = u_beat * 3.0;
-  }
-  // Cat 4: MID_STRUCTURE — buildings, vehicles → resonant vibration
-  else if (cat == 4) {
-    energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
-    // Vibration — high-frequency jitter proportional to energy
-    float vib = sin(idx * 0.5 + t * 20.0) * energy * 0.08;
-    displacement = vec3(vib * h1, vib * h2, vib * h3);
-    // Metallic blue/purple tint
-    colorTint = vec3(0.05, 0.02, 0.12) * energy;
-    sizeBoost = energy * 2.0;
-  }
-  // Cat 5: LOW_AMBIENT — walls, misc → subtle low-freq drift
-  else {
-    energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
-    // Very gentle drift
-    float drift = sin(pos.x * 0.5 + t * 0.8) * energy * 0.06;
-    displacement = vec3(drift, drift * 0.5, drift * 0.3);
-    colorTint = vec3(0.03, 0.03, 0.05) * energy;
+  // Cat 2: HIGH_SKY — flowing drift (silk-like movement)
+  else if (cat == 2) {
+    energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
+    // Smooth flowing field — very low frequency, large-scale motion
+    float flowX = sin(pos.x * 0.4 + pos.y * 0.3 + t * 1.2) * energy * 0.4;
+    float flowY = cos(pos.y * 0.5 + pos.x * 0.2 + t * 0.9) * energy * 0.3;
+    float flowZ = sin(pos.x * 0.3 + pos.y * 0.4 + t * 1.5) * energy * 0.2;
+    displacement = vec3(flowX, flowY, flowZ);
+    // Shimmer via color, not position
+    float shimmer = sin(pos.x * 3.0 + pos.y * 2.0 + t * 8.0) * 0.5 + 0.5;
+    colorTint = vec3(0.08, 0.1, 0.18) * energy * shimmer;
     sizeBoost = energy * 1.0;
   }
+  // Cat 3: BEAT_GROUND — surface ripple waves (barely lifts due to high mass)
+  else if (cat == 3) {
+    energy = u_beat * 0.7 + u_band0 * 0.3;
+    // Concentric ripple from center — spatial wave, not per-vertex
+    float rippleDist = length(pos.xz);
+    float ripple = sin(rippleDist * 4.0 - t * 6.0) * energy * 0.25;
+    displacement = vec3(0.0, ripple, 0.0);
+    colorTint = vec3(0.12, 0.08, 0.0) * u_beat;
+    sizeBoost = u_beat * 1.5;
+  }
+  // Cat 4: MID_STRUCTURE — resonant standing wave (vibrates in place)
+  else if (cat == 4) {
+    energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
+    // Standing wave — high freq but spatially coherent
+    float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.06;
+    float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.04;
+    displacement = vec3(vibX, vibY, 0.0);
+    colorTint = vec3(0.05, 0.02, 0.12) * energy;
+    sizeBoost = energy * 1.0;
+  }
+  // Cat 5: LOW_AMBIENT — slow drift field
+  else {
+    energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
+    // Very slow, large-scale drift
+    float driftX = sin(pos.x * 0.3 + t * 0.6) * energy * 0.2;
+    float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.15;
+    float driftZ = sin(pos.x * 0.2 + pos.y * 0.3 + t * 0.7) * energy * 0.1;
+    displacement = vec3(driftX, driftY, driftZ);
+    colorTint = vec3(0.03, 0.03, 0.05) * energy;
+    sizeBoost = energy * 0.5;
+  }
 
-  // Apply per-category displacement, scaled by coherence
-  // High coherence (1.0) → subtle 15% displacement (gentle breathing)
-  // Low coherence (0.0) → full displacement (abstract chaos)
-  float displaceScale = mix(1.0, 0.02, u_coherence);
-  pos += displacement * displaceScale;
+  // ── Apply displacement with mass + coherence scaling ──
+  // Mass: heavy objects barely move, light objects flow
+  // Coherence: user controls overall intensity
+  float displaceScale = mix(1.0, 0.05, u_coherence);
+  pos += displacement * invMass * displaceScale;
 
-  // ── Form jitter ──
+  // ── Form jitter (spatial noise, not per-vertex random) ──
   pos += vec3(
-    (hash(idx * 3.7) - 0.5) * u_form * 0.08,
-    (hash(idx * 7.3) - 0.5) * u_form * 0.08,
-    (hash(idx * 11.1) - 0.5) * u_form * 0.08
+    sin(pos.x * 7.0 + pos.y * 3.0) * u_form * 0.04,
+    sin(pos.y * 6.0 + pos.z * 4.0) * u_form * 0.04,
+    sin(pos.z * 5.0 + pos.x * 3.5) * u_form * 0.04
   );
 
   // ── SPATIAL COHERENCE ──
@@ -158,28 +178,29 @@ void main() {
   float localCoherence = clamp(u_coherence + depthProtection * (1.0 - u_coherence), 0.0, 1.0);
   float localChaos = 1.0 - localCoherence;
 
-  // Scatter — audio-active segments scatter more at low coherence
-  float segPhase = a_segment * 6.2831853;
-  float scatterBoost = 1.0 + energy * 0.8 * localChaos;
+  // Scatter — spatial waves at low coherence (not per-vertex hash)
+  // Uses position-based sin waves so neighbors scatter together = flowing chaos not random lines
+  float chaosFreq = 2.0 + energy * 3.0; // higher energy = tighter chaos waves
   vec3 scatter = vec3(
-    sin(idx * 0.017 + t * 0.5 * (0.5 + h1) + segPhase) * h1,
-    cos(idx * 0.013 + t * 0.5 * (0.4 + h2) + segPhase) * h2,
-    sin(idx * 0.011 + t * 0.5 * (0.6 + h3) + segPhase) * h3
-  ) * localChaos * 2.5 * scatterBoost;
+    sin(pos.x * chaosFreq + pos.y * 1.3 + t * 0.8),
+    cos(pos.y * chaosFreq + pos.z * 1.1 + t * 0.6),
+    sin(pos.z * chaosFreq + pos.x * 0.9 + t * 1.0)
+  ) * localChaos * 1.5 * invMass;
   pos += scatter;
 
-  // ── Global beat ripple (subtle, on top of per-category) ──
+  // ── Global beat wave (spatial, travels through scene) ──
   float zDist = u_projMode > 0.5 ? length(a_position) : -a_position.z;
-  float ripplePhase = zDist - t * 4.0;
-  float gRipple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
-  pos += dir * gRipple * u_beat * 0.12 * displaceScale;
+  float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.08 * invMass * displaceScale;
+  pos += dir * beatWave;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
   // ── Point size ──
   float baseSize = u_pointScale;
   float coherenceBoost = localCoherence * localCoherence * 6.0;
-  float ptSize = baseSize + coherenceBoost + sizeBoost * displaceScale;
+  // Heavy objects get slightly larger points (denser feel)
+  float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
+  float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
