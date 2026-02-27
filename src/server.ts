@@ -99,7 +99,7 @@ async function generateViaRunPod(
 
   if (startData.status === 'COMPLETED') {
     // Instant completion (unlikely but possible)
-    return processRunPodOutput(startData.output, mode);
+    return await processRunPodOutput(startData.output, mode);
   }
 
   // Poll for completion
@@ -122,7 +122,7 @@ async function generateViaRunPod(
 
     if (pollData.status === 'COMPLETED') {
       onStatus?.('Receiving point cloud...');
-      return processRunPodOutput(pollData.output, mode);
+      return await processRunPodOutput(pollData.output, mode);
     }
 
     if (pollData.status === 'FAILED') {
@@ -136,20 +136,48 @@ async function generateViaRunPod(
   throw new Error('RunPod job timed out (10 min)');
 }
 
-function processRunPodOutput(
-  output: { pointcloud_b64?: string; error?: string },
+async function decompressZlib(data: Uint8Array): Promise<ArrayBuffer> {
+  // zlib = 2-byte header + deflate stream + 4-byte checksum
+  // DecompressionStream('deflate') handles raw deflate
+  // Strip zlib header (2 bytes) and checksum (4 bytes)
+  const rawDeflate = data.slice(2, -4);
+  const ds = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  writer.write(rawDeflate);
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+  const result = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) {
+    result.set(c, offset);
+    offset += c.length;
+  }
+  return result.buffer;
+}
+
+async function processRunPodOutput(
+  output: { pointcloud_b64?: string; compressed?: boolean; error?: string },
   mode: string,
-): ServerResult {
+): Promise<ServerResult> {
   if (output.error) throw new Error(`Pipeline error: ${output.error}`);
   if (!output.pointcloud_b64) throw new Error('No point cloud in response');
 
   // Decode base64 to ArrayBuffer
   const binaryStr = atob(output.pointcloud_b64);
-  const buffer = new ArrayBuffer(binaryStr.length);
-  const view = new Uint8Array(buffer);
+  const raw = new Uint8Array(binaryStr.length);
   for (let i = 0; i < binaryStr.length; i++) {
-    view[i] = binaryStr.charCodeAt(i);
+    raw[i] = binaryStr.charCodeAt(i);
   }
+
+  // Decompress if server sent zlib-compressed data
+  const buffer = output.compressed ? await decompressZlib(raw) : raw.buffer;
 
   const projection: ProjectionMode = mode === 'panorama' ? 'equirectangular' : 'planar';
   return parseServerResponse(buffer, projection);

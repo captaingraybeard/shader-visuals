@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import runpod
 import base64
+import zlib
 import logging
 import torch
 
@@ -63,10 +64,13 @@ async def handler(job):
         log.exception("Pipeline error")
         return {"error": str(e)}
 
-    b64_data = base64.b64encode(result_bytes).decode("ascii")
+    compressed = zlib.compress(result_bytes, level=6)
+    b64_data = base64.b64encode(compressed).decode("ascii")
+    log.info(f"Response: {len(result_bytes)} raw → {len(compressed)} compressed → {len(b64_data)} b64")
 
     return {
         "pointcloud_b64": b64_data,
+        "compressed": True,
     }
 
 
