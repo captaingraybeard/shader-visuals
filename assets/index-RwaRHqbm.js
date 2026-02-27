@@ -141,8 +141,11 @@ void main() {
     sizeBoost = energy * 1.0;
   }
 
-  // Apply per-category displacement
-  pos += displacement;
+  // Apply per-category displacement, scaled by coherence
+  // High coherence (1.0) → subtle 15% displacement (gentle breathing)
+  // Low coherence (0.0) → full displacement (abstract chaos)
+  float displaceScale = mix(1.0, 0.15, u_coherence);
+  pos += displacement * displaceScale;
 
   // ── Form jitter ──
   pos += vec3(
@@ -170,14 +173,14 @@ void main() {
   float zDist = u_projMode > 0.5 ? length(a_position) : -a_position.z;
   float ripplePhase = zDist - t * 4.0;
   float gRipple = sin(ripplePhase * 5.0) * exp(-abs(fract(ripplePhase * 0.25)) * 2.0);
-  pos += dir * gRipple * u_beat * 0.12;
+  pos += dir * gRipple * u_beat * 0.12 * displaceScale;
 
   gl_Position = u_projection * u_view * vec4(pos, 1.0);
 
   // ── Point size ──
   float baseSize = u_pointScale;
   float coherenceBoost = localCoherence * localCoherence * 6.0;
-  float ptSize = baseSize + coherenceBoost + sizeBoost;
+  float ptSize = baseSize + coherenceBoost + sizeBoost * displaceScale;
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
