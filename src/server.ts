@@ -105,7 +105,7 @@ async function generateViaRunPod(
   // Poll for completion
   onStatus?.('Processing on GPU...');
   const pollUrl = `${RUNPOD_BASE}/status/${jobId}`;
-  const maxWait = 5 * 60 * 1000; // 5 min
+  const maxWait = 10 * 60 * 1000; // 10 min (cold start downloads models)
   const pollInterval = 2000;
   const start = Date.now();
 
@@ -133,7 +133,7 @@ async function generateViaRunPod(
     onStatus?.(`GPU processing... (${Math.round((Date.now() - start) / 1000)}s)`);
   }
 
-  throw new Error('RunPod job timed out (5 min)');
+  throw new Error('RunPod job timed out (10 min)');
 }
 
 function processRunPodOutput(
@@ -168,7 +168,7 @@ async function generateDirect(
   onStatus?.('Sending to server...');
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
 
   const resp = await fetch(`${DIRECT_SERVER_URL}/generate`, {
     method: 'POST',
