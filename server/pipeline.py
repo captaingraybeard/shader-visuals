@@ -2,8 +2,6 @@
 
 import asyncio
 import time
-import struct
-import json
 import logging
 from PIL import Image
 
@@ -22,10 +20,10 @@ async def run_pipeline(
     api_key: str,
     mode: str = "standard",
     vibe: str = "",
-) -> bytes:
+) -> tuple[bytes, dict]:
     """
     Full pipeline: generate → depth + segment (parallel) → point cloud → save.
-    Returns binary response: [4 bytes header_len][JSON header][packed point cloud]
+    Returns (binary_pointcloud, metadata_dict).
     """
     timings = {}
     t0 = time.time()
@@ -37,9 +35,9 @@ async def run_pipeline(
     log.info(f"Image generated: {image.size} in {timings['image_gen_ms']}ms")
     log.info(f"Revised prompt: {revised_prompt[:200]}...")
 
-    # 2. Extract scene objects from revised prompt (GPT-4o-mini)
+    # 2. Extract scene objects from actual image via GPT-4o-mini vision
     t = time.time()
-    dynamic_prompts = await extract_scene_objects(revised_prompt, api_key)
+    dynamic_prompts = await extract_scene_objects(image, api_key, revised_prompt)
     timings["extract_ms"] = int((time.time() - t) * 1000)
 
     # 3. Depth + Segmentation in parallel
@@ -83,8 +81,4 @@ async def run_pipeline(
     timings["total_ms"] = int((time.time() - t0) * 1000)
     log.info(f"Pipeline complete: {gen_id} in {timings['total_ms']}ms")
 
-    # 6. Pack response: [4 bytes header_len][JSON header][binary data]
-    header_json = json.dumps(metadata).encode("utf-8")
-    header_len = struct.pack("<I", len(header_json))
-
-    return header_len + header_json + packed_bytes
+    return packed_bytes, metadata

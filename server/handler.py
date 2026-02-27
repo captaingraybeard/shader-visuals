@@ -15,6 +15,9 @@ import torch
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+# Chunk size for streaming (10MB base64 chunks)
+CHUNK_SIZE = 10 * 1024 * 1024
+
 
 def _load_models():
     """Load models at worker startup (runs once per cold start)."""
@@ -30,7 +33,10 @@ _load_models()
 
 async def handler(job):
     """
-    RunPod async handler. Input schema:
+    RunPod async streaming handler. Yields chunks of base64-encoded
+    compressed point cloud data to bypass response size limits.
+
+    Input:
     {
         "prompt": str,
         "vibe": str (optional),
@@ -38,10 +44,9 @@ async def handler(job):
         "api_key": str (OpenAI key)
     }
 
-    Returns:
-    {
-        "pointcloud_b64": str (base64-encoded binary),
-    }
+    Yields:
+    First: {"metadata": {...}, "total_chunks": N, "chunk_index": 0, "data": "..."}
+    Then:  {"chunk_index": 1, "data": "..."} ...
     """
     from server.pipeline import run_pipeline
 
@@ -52,26 +57,49 @@ async def handler(job):
     api_key = job_input.get("api_key", "")
 
     if not prompt:
-        return {"error": "No prompt provided"}
+        yield {"error": "No prompt provided"}
+        return
     if not api_key:
-        return {"error": "No OpenAI API key provided"}
+        yield {"error": "No OpenAI API key provided"}
+        return
 
     try:
-        result_bytes = await run_pipeline(
+        result_bytes, metadata = await run_pipeline(
             prompt=prompt, api_key=api_key, mode=mode, vibe=vibe
         )
     except Exception as e:
         log.exception("Pipeline error")
-        return {"error": str(e)}
+        yield {"error": str(e)}
+        return
 
+    # Compress and encode
     compressed = zlib.compress(result_bytes, level=6)
     b64_data = base64.b64encode(compressed).decode("ascii")
     log.info(f"Response: {len(result_bytes)} raw → {len(compressed)} compressed → {len(b64_data)} b64")
 
-    return {
-        "pointcloud_b64": b64_data,
+    # Split into chunks
+    chunks = [b64_data[i:i + CHUNK_SIZE] for i in range(0, len(b64_data), CHUNK_SIZE)]
+    total_chunks = len(chunks)
+    log.info(f"Streaming {total_chunks} chunks")
+
+    # First chunk includes metadata
+    yield {
+        "metadata": metadata,
+        "total_chunks": total_chunks,
+        "chunk_index": 0,
+        "data": chunks[0],
         "compressed": True,
     }
 
+    # Remaining chunks
+    for i in range(1, total_chunks):
+        yield {
+            "chunk_index": i,
+            "data": chunks[i],
+        }
 
-runpod.serverless.start({"handler": handler})
+
+runpod.serverless.start({
+    "handler": handler,
+    "return_aggregate_stream": True,
+})

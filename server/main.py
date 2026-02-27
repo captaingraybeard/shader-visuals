@@ -55,7 +55,7 @@ async def generate(req: GenerateRequest):
         raise HTTPException(400, "No OpenAI API key provided")
 
     try:
-        result = await run_pipeline(
+        packed_bytes, metadata = await run_pipeline(
             prompt=req.prompt,
             api_key=api_key,
             mode=req.mode,
@@ -64,6 +64,12 @@ async def generate(req: GenerateRequest):
     except Exception as e:
         logging.exception("Pipeline error")
         raise HTTPException(500, str(e))
+
+    # Pack response: [4 bytes header_len][JSON header][binary data]
+    import struct, json
+    header_json = json.dumps(metadata).encode("utf-8")
+    header_len = struct.pack("<I", len(header_json))
+    result = header_len + header_json + packed_bytes
 
     return Response(
         content=result,

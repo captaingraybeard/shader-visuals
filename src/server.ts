@@ -163,24 +163,56 @@ async function decompressZlib(data: Uint8Array): Promise<ArrayBuffer> {
 }
 
 async function processRunPodOutput(
-  output: { pointcloud_b64?: string; compressed?: boolean; error?: string },
+  output: unknown,
   mode: string,
 ): Promise<ServerResult> {
-  if (output.error) throw new Error(`Pipeline error: ${output.error}`);
-  if (!output.pointcloud_b64) throw new Error('No point cloud in response');
+  // With return_aggregate_stream, output is an array of yielded chunks
+  // Each chunk: { chunk_index, data, metadata?, total_chunks?, compressed?, error? }
+  let chunks: Array<{ chunk_index: number; data: string; metadata?: Record<string, unknown>; total_chunks?: number; compressed?: boolean; error?: string }>;
+
+  if (Array.isArray(output)) {
+    chunks = output;
+  } else if (output && typeof output === 'object') {
+    // Legacy single-object format (fallback)
+    const obj = output as { pointcloud_b64?: string; compressed?: boolean; error?: string; data?: string; metadata?: Record<string, unknown> };
+    if (obj.error) throw new Error(`Pipeline error: ${obj.error}`);
+    // Convert legacy format
+    chunks = [{
+      chunk_index: 0,
+      data: obj.pointcloud_b64 || obj.data || '',
+      compressed: obj.compressed,
+      metadata: obj.metadata,
+    }];
+  } else {
+    throw new Error('Unexpected RunPod output format');
+  }
+
+  // Check for errors
+  for (const chunk of chunks) {
+    if (chunk.error) throw new Error(`Pipeline error: ${chunk.error}`);
+  }
+
+  // Sort by chunk_index and reassemble
+  chunks.sort((a, b) => a.chunk_index - b.chunk_index);
+  const fullB64 = chunks.map(c => c.data).join('');
+  const metadata = chunks[0]?.metadata || {};
+  const compressed = chunks[0]?.compressed ?? false;
+
+  console.log(`Reassembled ${chunks.length} chunks, ${fullB64.length} b64 chars`);
 
   // Decode base64 to ArrayBuffer
-  const binaryStr = atob(output.pointcloud_b64);
+  const binaryStr = atob(fullB64);
   const raw = new Uint8Array(binaryStr.length);
   for (let i = 0; i < binaryStr.length; i++) {
     raw[i] = binaryStr.charCodeAt(i);
   }
 
   // Decompress if server sent zlib-compressed data
-  const buffer = output.compressed ? await decompressZlib(raw) : raw.buffer;
+  const buffer = compressed ? await decompressZlib(raw) : raw.buffer;
 
+  // Parse the raw packed binary (no header — metadata comes from chunks)
   const projection: ProjectionMode = mode === 'panorama' ? 'equirectangular' : 'planar';
-  return parseServerResponse(buffer, projection);
+  return parsePackedPointCloud(buffer, metadata, projection);
 }
 
 /**
@@ -248,7 +280,7 @@ export async function checkServerHealth(url?: string): Promise<boolean> {
 }
 
 /**
- * Parse the binary response into PointCloudData.
+ * Parse the binary response from local/direct server (header + binary).
  */
 function parseServerResponse(buffer: ArrayBuffer, projection: ProjectionMode): ServerResult {
   const view = new DataView(buffer);
@@ -260,6 +292,19 @@ function parseServerResponse(buffer: ArrayBuffer, projection: ProjectionMode): S
 
   // Point cloud data starts after header
   const dataOffset = 4 + headerLen;
+  const pcBuffer = buffer.slice(dataOffset);
+
+  return parsePackedPointCloud(pcBuffer, metadata, projection);
+}
+
+/**
+ * Parse raw packed point cloud binary into PointCloudData.
+ */
+function parsePackedPointCloud(
+  buffer: ArrayBuffer,
+  metadata: Record<string, unknown>,
+  projection: ProjectionMode,
+): ServerResult {
   const pointCount = metadata.point_count as number;
   const BYTES_PER_POINT = 20;
 
@@ -267,7 +312,7 @@ function parseServerResponse(buffer: ArrayBuffer, projection: ProjectionMode): S
   const colors = new Float32Array(pointCount * 3);
   const segments = new Float32Array(pointCount);
 
-  const data = new DataView(buffer, dataOffset);
+  const data = new DataView(buffer);
 
   for (let i = 0; i < pointCount; i++) {
     const off = i * BYTES_PER_POINT;
