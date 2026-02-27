@@ -144,7 +144,7 @@ void main() {
   // Apply per-category displacement, scaled by coherence
   // High coherence (1.0) → subtle 15% displacement (gentle breathing)
   // Low coherence (0.0) → full displacement (abstract chaos)
-  float displaceScale = mix(1.0, 0.15, u_coherence);
+  float displaceScale = mix(1.0, 0.02, u_coherence);
   pos += displacement * displaceScale;
 
   // ── Form jitter ──
