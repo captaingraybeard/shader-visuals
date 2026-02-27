@@ -335,10 +335,10 @@ export class App {
 
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
 
-    // Audio drives coherence down — but the shader applies this spatially
-    // (foreground protected, background gets wrecked first)
-    const audioEnergy = audioData.u_bass * 0.35 + audioData.u_mid * 0.15 + audioData.u_high * 0.1 + audioData.u_beat * 0.4;
-    const effectiveCoherence = Math.max(0, Math.min(1, this.coherence - audioEnergy * 0.6));
+    // Coherence is now purely user-controlled via slider.
+    // Audio affects the scene through per-segment displacement in the shader,
+    // NOT by reducing coherence (which triggers scatter and destroys the scene).
+    const effectiveCoherence = this.coherence;
 
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
