@@ -7,7 +7,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import runpod
-import asyncio
 import base64
 import logging
 import torch
@@ -28,9 +27,9 @@ def _load_models():
 _load_models()
 
 
-def handler(job):
+async def handler(job):
     """
-    RunPod handler. Input schema:
+    RunPod async handler. Input schema:
     {
         "prompt": str,
         "vibe": str (optional),
@@ -57,10 +56,8 @@ def handler(job):
         return {"error": "No OpenAI API key provided"}
 
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result_bytes = loop.run_until_complete(
-            run_pipeline(prompt=prompt, api_key=api_key, mode=mode, vibe=vibe)
+        result_bytes = await run_pipeline(
+            prompt=prompt, api_key=api_key, mode=mode, vibe=vibe
         )
     except Exception as e:
         log.exception("Pipeline error")
