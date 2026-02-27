@@ -166,51 +166,30 @@ async function processRunPodOutput(
   output: unknown,
   mode: string,
 ): Promise<ServerResult> {
-  // With return_aggregate_stream, output is an array of yielded chunks
-  // Each chunk: { chunk_index, data, metadata?, total_chunks?, compressed?, error? }
-  let chunks: Array<{ chunk_index: number; data: string; metadata?: Record<string, unknown>; total_chunks?: number; compressed?: boolean; error?: string }>;
+  const obj = output as {
+    pointcloud_b64?: string;
+    compressed?: boolean;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  };
 
-  if (Array.isArray(output)) {
-    chunks = output;
-  } else if (output && typeof output === 'object') {
-    // Legacy single-object format (fallback)
-    const obj = output as { pointcloud_b64?: string; compressed?: boolean; error?: string; data?: string; metadata?: Record<string, unknown> };
-    if (obj.error) throw new Error(`Pipeline error: ${obj.error}`);
-    // Convert legacy format
-    chunks = [{
-      chunk_index: 0,
-      data: obj.pointcloud_b64 || obj.data || '',
-      compressed: obj.compressed,
-      metadata: obj.metadata,
-    }];
-  } else {
-    throw new Error('Unexpected RunPod output format');
-  }
+  if (obj.error) throw new Error(`Pipeline error: ${obj.error}`);
+  if (!obj.pointcloud_b64) throw new Error('No point cloud in response');
 
-  // Check for errors
-  for (const chunk of chunks) {
-    if (chunk.error) throw new Error(`Pipeline error: ${chunk.error}`);
-  }
+  const metadata = obj.metadata || {};
 
-  // Sort by chunk_index and reassemble
-  chunks.sort((a, b) => a.chunk_index - b.chunk_index);
-  const fullB64 = chunks.map(c => c.data).join('');
-  const metadata = chunks[0]?.metadata || {};
-  const compressed = chunks[0]?.compressed ?? false;
-
-  console.log(`Reassembled ${chunks.length} chunks, ${fullB64.length} b64 chars`);
+  console.log(`RunPod response: ${obj.pointcloud_b64.length} b64 chars, metadata keys: ${Object.keys(metadata).join(', ')}`);
 
   // Decode base64 to ArrayBuffer
-  const binaryStr = atob(fullB64);
+  const binaryStr = atob(obj.pointcloud_b64);
   const raw = new Uint8Array(binaryStr.length);
   for (let i = 0; i < binaryStr.length; i++) {
     raw[i] = binaryStr.charCodeAt(i);
   }
 
   // Decompress if server sent zlib-compressed data
-  const buffer = compressed ? await decompressZlib(raw) : raw.buffer;
+  const buffer = obj.compressed ? await decompressZlib(raw) : raw.buffer;
 
-  // Parse the raw packed binary (no header — metadata comes from chunks)
   const projection: ProjectionMode = mode === 'panorama' ? 'equirectangular' : 'planar';
   return parsePackedPointCloud(buffer, metadata, projection);
 }

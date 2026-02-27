@@ -10,6 +10,7 @@ def build_point_cloud(
     depth: np.ndarray,
     segments: np.ndarray,
     mode: str = "standard",
+    stride: int = 1,
 ) -> tuple[bytes, int]:
     """
     Build packed binary point cloud from image + depth + segments.
@@ -71,8 +72,17 @@ def build_point_cloud(
         y = (yy * PLANE_WIDTH * aspect).astype(np.float32)
         z = (DEPTH_OFFSET - (1.0 - depth) * DEPTH_RANGE).astype(np.float32)
 
+    # Subsample if stride > 1 (reduces transfer size while keeping full-res processing)
+    if stride > 1:
+        x = x[::stride, ::stride]
+        y = y[::stride, ::stride]
+        z = z[::stride, ::stride]
+        img_arr = img_arr[::stride, ::stride]
+        segments = segments[::stride, ::stride]
+
     # Flatten everything
-    point_count = h * w
+    sh, sw = x.shape
+    point_count = sh * sw
     positions = np.stack([x, y, z], axis=-1).reshape(point_count, 3)  # N x 3
     colors = img_arr.reshape(point_count, 3)  # N x 3 uint8
     segs = segments.reshape(point_count)  # N uint8

@@ -54,7 +54,7 @@ async def run_pipeline(
     # 4. Build point cloud
     t = time.time()
     projection = "equirectangular" if mode == "panorama" else "planar"
-    packed_bytes, point_count = build_point_cloud(image, depth, segments, mode=mode)
+    packed_bytes, point_count = build_point_cloud(image, depth, segments, mode=mode, stride=2)
     timings["pointcloud_ms"] = int((time.time() - t) * 1000)
 
     # 5. Save to storage
