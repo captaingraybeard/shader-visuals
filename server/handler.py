@@ -3,8 +3,6 @@
 import sys
 import os
 
-# Add stubs dir FIRST so fake decord module is found (SAM3 imports it but we don't use video)
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "stubs"))
 # Add parent dir to path so `server` package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

@@ -4,6 +4,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# System deps for pycocotools (cython) and decord (ffmpeg)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake libavcodec-dev libavfilter-dev libavformat-dev \
+    libavutil-dev libswscale-dev ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install Python deps (torch already in base image, will be upgraded to 2.7+)
 COPY server/requirements-runpod.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
