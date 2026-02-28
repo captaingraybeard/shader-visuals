@@ -15,12 +15,18 @@ export interface TonePreset {
   fundamental: number;       // Hz
   harmonics: number[];       // multipliers (e.g. [2, 3, 4] = integer harmonics)
   harmonicGains: number[];   // gain per harmonic (0-1)
+  harmonicTypes?: OscillatorType[];  // per-voice waveform (parallel to harmonics)
+  subHarmonics?: number[];   // sub-harmonic multipliers (e.g. [0.5, 0.333] = octave below, fifth below)
+  subHarmonicGains?: number[]; // gain per sub-harmonic
+  subHarmonicTypes?: OscillatorType[]; // waveform per sub-harmonic
   goldenRatio: boolean;      // add φ×fundamental
   goldenGain: number;        // gain of golden ratio tone
+  goldenType?: OscillatorType; // waveform for golden ratio tones
   beatFreq: number;          // Hz offset for beating (0 = no beat)
   beatGain: number;          // gain of beating oscillator
   lfoRate: number;           // Hz — slow modulation of amplitudes
   lfoDepth: number;          // 0-1 — how much LFO affects gains
+  detuneCents?: number;      // detune all oscillators by this many cents
 }
 
 export const TONE_PRESETS: TonePreset[] = [
@@ -29,8 +35,13 @@ export const TONE_PRESETS: TonePreset[] = [
     fundamental: 40,
     harmonics: [2, 3, 5],
     harmonicGains: [0.6, 0.4, 0.2],
+    harmonicTypes: ['sine', 'sine', 'triangle'],
+    subHarmonics: [0.5],
+    subHarmonicGains: [0.4],
+    subHarmonicTypes: ['sawtooth'],
     goldenRatio: true,
     goldenGain: 0.35,
+    goldenType: 'triangle',
     beatFreq: 2.5,
     beatGain: 0.5,
     lfoRate: 0.15,
@@ -41,8 +52,13 @@ export const TONE_PRESETS: TonePreset[] = [
     fundamental: 28,
     harmonics: [2, 3, 4, 7],
     harmonicGains: [0.7, 0.5, 0.3, 0.15],
+    harmonicTypes: ['sine', 'sine', 'square', 'square'],
+    subHarmonics: [0.5, 0.333],
+    subHarmonicGains: [0.6, 0.4],
+    subHarmonicTypes: ['sawtooth', 'sawtooth'],
     goldenRatio: true,
     goldenGain: 0.4,
+    goldenType: 'triangle',
     beatFreq: 1.5,
     beatGain: 0.6,
     lfoRate: 0.08,
@@ -53,20 +69,27 @@ export const TONE_PRESETS: TonePreset[] = [
     fundamental: 110,
     harmonics: [2, 3, 5, 8, 13],
     harmonicGains: [0.5, 0.4, 0.35, 0.25, 0.15],
+    harmonicTypes: ['sine', 'square', 'square', 'square', 'sine'],
     goldenRatio: true,
     goldenGain: 0.3,
+    goldenType: 'triangle',
     beatFreq: 5,
     beatGain: 0.4,
     lfoRate: 0.4,
     lfoDepth: 0.5,
+    detuneCents: 3,
   },
   {
     name: 'Jellyfish',
     fundamental: 55,
     harmonics: [2, 4],
     harmonicGains: [0.5, 0.25],
+    subHarmonics: [0.5],
+    subHarmonicGains: [0.35],
+    subHarmonicTypes: ['sawtooth'],
     goldenRatio: true,
     goldenGain: 0.5,
+    goldenType: 'triangle',
     beatFreq: 0.8,
     beatGain: 0.7,
     lfoRate: 0.05,
@@ -77,12 +100,14 @@ export const TONE_PRESETS: TonePreset[] = [
     fundamental: 80,
     harmonics: [2, 3, 5, 7, 11],
     harmonicGains: [0.5, 0.45, 0.4, 0.3, 0.2],
+    harmonicTypes: ['sine', 'sine', 'square', 'square', 'square'],
     goldenRatio: true,
     goldenGain: 0.25,
     beatFreq: 7,
     beatGain: 0.35,
     lfoRate: 0.6,
     lfoDepth: 0.4,
+    detuneCents: 5,
   },
   {
     name: 'Chladni',
@@ -95,6 +120,119 @@ export const TONE_PRESETS: TonePreset[] = [
     beatGain: 0.45,
     lfoRate: 0.2,
     lfoDepth: 0.7,
+  },
+  // ── Fibonacci — organic interference patterns ──
+  {
+    name: 'Fibonacci',
+    fundamental: 55,
+    harmonics: [1, 2, 3, 5, 8, 13, 21],
+    harmonicGains: [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
+    harmonicTypes: ['sine', 'sine', 'triangle', 'triangle', 'sine', 'sine', 'sine'],
+    goldenRatio: true,
+    goldenGain: 0.35,
+    goldenType: 'triangle',
+    beatFreq: 2,
+    beatGain: 0.4,
+    lfoRate: 0.12,
+    lfoDepth: 0.6,
+  },
+  // ── Mycelium — very low, sub-harmonics, spreading network ──
+  {
+    name: 'Mycelium',
+    fundamental: 25,
+    harmonics: [2, 3],
+    harmonicGains: [0.3, 0.15],
+    subHarmonics: [0.5, 0.333, 0.25],
+    subHarmonicGains: [0.6, 0.5, 0.35],
+    subHarmonicTypes: ['sawtooth', 'sawtooth', 'sawtooth'],
+    goldenRatio: true,
+    goldenGain: 0.2,
+    goldenType: 'triangle',
+    beatFreq: 0.5,
+    beatGain: 0.3,
+    lfoRate: 0.03,
+    lfoDepth: 0.9,
+  },
+  // ── Serpent — sliding between harmonics, sinuous ──
+  {
+    name: 'Serpent',
+    fundamental: 65,
+    harmonics: [2, 3, 4, 5],
+    harmonicGains: [0.6, 0.5, 0.35, 0.2],
+    harmonicTypes: ['sine', 'triangle', 'sine', 'triangle'],
+    subHarmonics: [0.5],
+    subHarmonicGains: [0.4],
+    subHarmonicTypes: ['sawtooth'],
+    goldenRatio: true,
+    goldenGain: 0.3,
+    goldenType: 'triangle',
+    beatFreq: 1.2,
+    beatGain: 0.4,
+    lfoRate: 0.1,
+    lfoDepth: 0.7,
+    detuneCents: 12,
+  },
+  // ── Crystal — pure integer harmonics, geometric ──
+  {
+    name: 'Crystal',
+    fundamental: 220,
+    harmonics: [2, 3, 4, 5, 6, 7, 8],
+    harmonicGains: [0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],
+    harmonicTypes: ['sine', 'sine', 'sine', 'sine', 'sine', 'sine', 'sine'],
+    goldenRatio: false,
+    goldenGain: 0,
+    beatFreq: 4,
+    beatGain: 0.3,
+    lfoRate: 0.25,
+    lfoDepth: 0.3,
+  },
+  // ── Void — only golden ratio + sub-harmonics, maximally alien ──
+  {
+    name: 'Void',
+    fundamental: 30,
+    harmonics: [],
+    harmonicGains: [],
+    subHarmonics: [0.5, 0.333, 0.25],
+    subHarmonicGains: [0.7, 0.5, 0.35],
+    subHarmonicTypes: ['sawtooth', 'sawtooth', 'sawtooth'],
+    goldenRatio: true,
+    goldenGain: 0.6,
+    goldenType: 'triangle',
+    beatFreq: 0.3,
+    beatGain: 0.5,
+    lfoRate: 0.04,
+    lfoDepth: 0.95,
+  },
+  // ── Heartbeat — 50Hz, strong beating at 1Hz ──
+  {
+    name: 'Heartbeat',
+    fundamental: 50,
+    harmonics: [2],
+    harmonicGains: [0.3],
+    subHarmonics: [0.5],
+    subHarmonicGains: [0.5],
+    subHarmonicTypes: ['sawtooth'],
+    goldenRatio: false,
+    goldenGain: 0,
+    beatFreq: 1,
+    beatGain: 0.8,
+    lfoRate: 0.5,
+    lfoDepth: 0.9,
+  },
+  // ── Flock — many close frequencies, shimmering chorus ──
+  {
+    name: 'Flock',
+    fundamental: 90,
+    harmonics: [2, 3, 4, 5],
+    harmonicGains: [0.5, 0.4, 0.3, 0.2],
+    harmonicTypes: ['sine', 'sine', 'triangle', 'triangle'],
+    goldenRatio: true,
+    goldenGain: 0.2,
+    beatFreq: 1.5,
+    beatGain: 0.4,
+    lfoRate: 0.3,
+    lfoDepth: 0.5,
+    detuneCents: 8,
   },
 ];
 
@@ -244,11 +382,14 @@ export class AudioEngine {
       this.toneLfo.start(now);
     }
 
-    // Helper: create an oscillator at a frequency with a gain
+    const detune = preset.detuneCents ?? 0;
+
+    // Helper: create an oscillator at a frequency with a gain and waveform
     const makeOsc = (freq: number, gain: number, type: OscillatorType = 'sine'): void => {
       const osc = ctx.createOscillator();
       osc.type = type;
       osc.frequency.value = freq;
+      if (detune !== 0) osc.detune.value = detune;
 
       const g = ctx.createGain();
       g.gain.value = gain;
@@ -269,21 +410,33 @@ export class AudioEngine {
     // 1. Fundamental
     makeOsc(f0, 0.8);
 
-    // 2. Integer harmonics — increasing complexity
+    // 2. Integer harmonics — per-voice waveform support
     for (let i = 0; i < preset.harmonics.length; i++) {
       const mult = preset.harmonics[i];
       const gain = preset.harmonicGains[i] ?? 0.3;
-      makeOsc(f0 * mult, gain);
+      const type = preset.harmonicTypes?.[i] ?? 'sine';
+      makeOsc(f0 * mult, gain, type);
     }
 
-    // 3. Golden ratio harmonic — breaks symmetry, creates organic form
+    // 3. Sub-harmonics — deep undertones below the fundamental
+    if (preset.subHarmonics) {
+      for (let i = 0; i < preset.subHarmonics.length; i++) {
+        const mult = preset.subHarmonics[i];
+        const gain = preset.subHarmonicGains?.[i] ?? 0.3;
+        const type = preset.subHarmonicTypes?.[i] ?? 'sawtooth';
+        makeOsc(f0 * mult, gain, type);
+      }
+    }
+
+    // 4. Golden ratio harmonic — breaks symmetry, creates organic form
     if (preset.goldenRatio && preset.goldenGain > 0) {
-      makeOsc(f0 * PHI, preset.goldenGain);
+      const gType = preset.goldenType ?? 'sine';
+      makeOsc(f0 * PHI, preset.goldenGain, gType);
       // Also add φ² for deeper quasi-periodicity
-      makeOsc(f0 * PHI * PHI, preset.goldenGain * 0.4);
+      makeOsc(f0 * PHI * PHI, preset.goldenGain * 0.4, gType);
     }
 
-    // 4. Beating pair — two close frequencies create pulsation (apparent life)
+    // 5. Beating pair — two close frequencies create pulsation (apparent life)
     if (preset.beatFreq > 0 && preset.beatGain > 0) {
       makeOsc(f0 + preset.beatFreq, preset.beatGain);
       // The interference between f0 and f0+beatFreq creates an envelope
