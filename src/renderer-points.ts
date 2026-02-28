@@ -164,7 +164,35 @@ void main() {
   // Mass: heavy objects barely move, light objects flow
   // Coherence: user controls overall intensity
   float displaceScale = mix(1.0, 0.05, u_coherence);
+
+  // ── Chladni standing wave pattern — modulates per-category displacement ──
+  float chladni = sin(pos.x * 6.0 + t * 0.5) * sin(pos.y * 6.0 + t * 0.3);
+  displacement *= mix(1.0, chladni, 0.4); // blend 40% chladni structure
+
   pos += displacement * invMass * displaceScale;
+
+  // ── Global wave field (affects ALL points) ──
+  float globalWave1 = sin(pos.x * 2.0 + pos.y * 1.5 + t * 0.8) * u_band2 * 0.05;
+  float globalWave2 = sin(pos.y * 3.0 + pos.z * 2.0 + t * 1.2) * u_band4 * 0.04;
+  float globalWave3 = sin(pos.z * 1.8 + pos.x * 2.5 + t * 0.6) * u_band6 * 0.03;
+  pos += vec3(globalWave1, globalWave2, globalWave3) * invMass * displaceScale;
+
+  // ── Interference patterns between bands ──
+  float interference = u_band0 * u_band3; // bass × mid
+  float intWave = sin(pos.x * 4.0 + pos.y * 3.0 + t * 2.0) * interference;
+  pos.y += intWave * 0.06 * invMass * displaceScale;
+
+  // ── Spiral wave (rotational around Y axis) ──
+  float angle = atan(pos.z, pos.x);
+  float radius = length(pos.xz);
+  float spiral = sin(angle * 3.0 + radius * 2.0 - t * 1.5) * u_mid * 0.06;
+  vec3 tangent = normalize(vec3(-pos.z, 0.0, pos.x) + 0.001);
+  pos += tangent * spiral * invMass * displaceScale;
+
+  // ── Pulse wave (expanding sphere from origin) ──
+  float dist = length(pos);
+  float pulse = sin(dist * 5.0 - t * 4.0) * u_beat * 0.1;
+  pos += normalize(pos + 0.001) * pulse * invMass * displaceScale;
 
   // ── Form jitter (spatial noise, not per-vertex random) ──
   pos += vec3(
