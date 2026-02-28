@@ -25,6 +25,7 @@ uniform float u_high;
 uniform float u_beat;
 uniform float u_coherence;
 uniform vec2 u_resolution;
+uniform int u_iteration; // 0-based fractal iteration index
 
 out vec4 fragColor;
 
@@ -43,11 +44,23 @@ vec3 rgb2hsv(vec3 c) {
   return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
+vec2 rotateUV(vec2 p, float a) {
+  float cs = cos(a), sn = sin(a);
+  return vec2(p.x * cs - p.y * sn, p.x * sn + p.y * cs);
+}
+
 void main() {
   vec2 uv = v_uv;
   float chaos = 1.0 - u_coherence;
 
-  // === Kaleidoscope (low coherence < 0.4) ===
+  // ========================================
+  // 1. Sample scene
+  // ========================================
+  vec3 col = texture(u_scene, uv).rgb;
+
+  // ========================================
+  // 2. Kaleidoscope warp (low coherence < 0.4)
+  // ========================================
   float kAmount = smoothstep(0.4, 0.1, u_coherence);
   if (kAmount > 0.01) {
     vec2 kp = uv - 0.5;
@@ -56,21 +69,95 @@ void main() {
     float segments = 6.0;
     angle = mod(angle, 3.14159 * 2.0 / segments);
     angle = abs(angle - 3.14159 / segments);
-    // Rotate with audio
     angle += u_time * 0.1 * u_high;
     vec2 kuv = vec2(cos(angle), sin(angle)) * radius + 0.5;
-    uv = mix(uv, kuv, kAmount);
+    vec2 warpedUV = mix(uv, kuv, kAmount);
+    col = texture(u_scene, warpedUV).rgb;
+    uv = warpedUV;
   }
 
-  // === Chromatic aberration (on beats, more at low coherence) ===
-  float caAmount = u_beat * (0.002 + chaos * 0.008);
-  vec2 caDir = normalize(uv - 0.5 + 0.001) * caAmount;
-  float r = texture(u_scene, uv + caDir).r;
-  float g = texture(u_scene, uv).g;
-  float b = texture(u_scene, uv - caDir).b;
-  vec3 col = vec3(r, g, b);
+  // ========================================
+  // 3. Fractal feedback / infinite regression (NEW)
+  // ========================================
+  float trailAmount = smoothstep(0.8, 0.3, u_coherence) * 0.7;
+  if (trailAmount > 0.01) {
+    float warp = chaos;
 
-  // === Bloom (bright areas glow, scales with audio) ===
+    // Audio-driven zoom: bass controls inward zoom, beat reverses it
+    float zoomIn = 0.98 - u_bass * 0.02 * warp;   // tunnel pulls inward
+    float zoomOut = 1.02 + u_bass * 0.01 * warp;   // expansion layer
+    // Beat reversal: momentarily flip zoom direction
+    float beatFlip = u_beat * warp;
+    zoomIn = mix(zoomIn, zoomOut, beatFlip);
+    zoomOut = mix(zoomOut, 0.97, beatFlip);
+
+    // Mid drives spiral rotation
+    float spiralAngle = (0.01 + u_mid * 0.04) * warp;
+
+    // High controls how many layers blend in (2-4 layers)
+    float layerBlend = 0.5 + u_high * 0.5; // scales the outer layer weights
+
+    // Base UV for feedback sampling
+    vec2 fbUV = uv;
+
+    // Sine wave distortion on feedback — creates rippling infinite tunnel
+    float wave = sin(fbUV.y * 20.0 + u_time * 2.0) * 0.003 * chaos;
+    float wave2 = sin(fbUV.x * 15.0 + u_time * 1.5) * 0.002 * chaos;
+    fbUV += vec2(wave, wave2);
+
+    // --- Multi-sample fractal regression ---
+    // Layer 0: original position (current feedback)
+    vec2 centered = fbUV - 0.5;
+    vec3 prev0 = texture(u_prev, fbUV).rgb;
+
+    // Layer 1: zoom inward (infinite tunnel)
+    vec2 uvZoomIn = 0.5 + centered * zoomIn;
+    vec3 prev1 = texture(u_prev, uvZoomIn).rgb;
+
+    // Layer 2: zoom outward (expansion echo)
+    vec2 uvZoomOut = 0.5 + centered * zoomOut;
+    vec3 prev2 = texture(u_prev, uvZoomOut).rgb;
+
+    // Layer 3: spiral rotation
+    vec2 uvSpiral = 0.5 + rotateUV(centered, spiralAngle);
+    vec3 prev3 = texture(u_prev, uvSpiral).rgb;
+
+    // Weighted blend of all feedback layers
+    // Zoom-in is dominant (creates the depth), others add complexity
+    float w0 = 0.25;
+    float w1 = 0.40;                    // inward zoom — primary depth
+    float w2 = 0.15 * layerBlend;       // outward — scaled by high freq
+    float w3 = 0.20 * layerBlend;       // spiral — scaled by high freq
+    float wTotal = w0 + w1 + w2 + w3;
+
+    vec3 prevBlend = (prev0 * w0 + prev1 * w1 + prev2 * w2 + prev3 * w3) / wTotal;
+
+    // Slight decay to prevent infinite brightness buildup
+    prevBlend *= 0.95;
+
+    // Blend feedback with current scene — iteration passes compound this
+    float iterFade = 1.0 / (1.0 + float(u_iteration) * 0.3); // diminish on deeper passes
+    float feedbackMix = trailAmount * iterFade;
+    col = mix(col, max(col, prevBlend), feedbackMix);
+  }
+
+  // ========================================
+  // 4. Chromatic aberration (on beats, more at low coherence)
+  // ========================================
+  float caAmount = u_beat * (0.002 + chaos * 0.008);
+  if (caAmount > 0.0001) {
+    vec2 caDir = normalize(uv - 0.5 + 0.001) * caAmount;
+    float cr = texture(u_scene, uv + caDir).r;
+    float cg = texture(u_scene, uv).g;
+    float cb = texture(u_scene, uv - caDir).b;
+    // Blend CA with current col (which already has feedback)
+    vec3 caCol = vec3(cr, cg, cb);
+    col = mix(col, col + (caCol - texture(u_scene, uv).rgb), 1.0);
+  }
+
+  // ========================================
+  // 5. Bloom (bright areas glow, scales with audio)
+  // ========================================
   float bloomStrength = 0.15 + chaos * 0.3 + u_bass * 0.2;
   vec3 bloom = vec3(0.0);
   float total = 0.0;
@@ -79,7 +166,6 @@ void main() {
     for (float j = -3.0; j <= 3.0; j++) {
       float w = exp(-(i*i + j*j) / 8.0);
       vec3 s = texture(u_scene, uv + vec2(i, j) * texel * 3.0).rgb;
-      // Only bloom bright parts
       float lum = dot(s, vec3(0.299, 0.587, 0.114));
       bloom += s * w * smoothstep(0.4, 1.0, lum);
       total += w;
@@ -88,58 +174,27 @@ void main() {
   bloom /= total;
   col += bloom * bloomStrength;
 
-  // === Frame feedback / trails with UV warp (TouchDesigner-style melt) ===
-  float trailAmount = smoothstep(0.8, 0.3, u_coherence) * 0.7;
-  if (trailAmount > 0.01) {
-    // Warp UV when sampling previous frame for feedback
-    vec2 fbUV = v_uv;
-    float warpIntensity = chaos; // high chaos = trippy melt, high coherence = clean
-
-    // Bass drives radial zoom (UV pulls toward/away from center)
-    vec2 toCenter = fbUV - 0.5;
-    float radialZoom = 1.0 + u_bass * 0.015 * warpIntensity;
-    fbUV = 0.5 + toCenter * radialZoom;
-
-    // Mid drives rotation
-    float rotAngle = u_mid * 0.02 * warpIntensity;
-    float cs = cos(rotAngle), sn = sin(rotAngle);
-    vec2 centered = fbUV - 0.5;
-    fbUV = vec2(centered.x * cs - centered.y * sn, centered.x * sn + centered.y * cs) + 0.5;
-
-    vec3 prev = texture(u_prev, fbUV).rgb;
-    col = mix(col, max(col, prev * 0.95), trailAmount);
-  }
-
-  // === Color cycling (hue rotation breathing with audio) ===
-  float cycleAmount = chaos * 0.3;
-  if (cycleAmount > 0.01) {
-    vec3 hsv = rgb2hsv(col);
-    hsv.x = fract(hsv.x + sin(u_time * 0.5) * cycleAmount + u_bass * 0.05);
-    col = hsv2rgb(hsv);
-  }
-
-  // === Glitch effects (digital, driven by beat * chaos) ===
+  // ========================================
+  // 6. Glitch effects (digital, driven by beat * chaos)
+  // ========================================
   float glitchAmount = u_beat * chaos;
   if (glitchAmount > 0.05) {
-    // Pseudo-random helpers
-    float seed = floor(u_time * 12.0); // changes ~12x/sec for blocky feel
-    float rnd1 = fract(sin(seed * 43758.5453) * 2183.5);
-    float rnd2 = fract(sin(seed * 12345.678) * 4375.8);
+    float seed = floor(u_time * 12.0);
 
-    // Horizontal scanline displacement: random rows shift left/right
-    float scanlineY = floor(uv.y * u_resolution.y / 3.0); // every 3 pixels
+    // Horizontal scanline displacement
+    float scanlineY = floor(uv.y * u_resolution.y / 3.0);
     float scanShift = fract(sin(scanlineY * 91.2 + seed * 47.3) * 4758.5) - 0.5;
     float scanMask = step(0.92 - chaos * 0.3, fract(sin(scanlineY * 173.1 + seed) * 2847.3));
     vec2 scanUV = uv + vec2(scanShift * 0.03 * glitchAmount * scanMask, 0.0);
 
-    // RGB channel separation (blocky/digital — separate from smooth CA)
+    // RGB channel separation (blocky/digital)
     float rgbSplit = glitchAmount * 0.01;
     float splitR = texture(u_scene, scanUV + vec2(rgbSplit, 0.0)).r;
     float splitB = texture(u_scene, scanUV - vec2(rgbSplit, 0.0)).b;
     col.r = mix(col.r, splitR, glitchAmount * 0.5);
     col.b = mix(col.b, splitB, glitchAmount * 0.5);
 
-    // Block glitch: rectangular regions randomly offset
+    // Block glitch
     float blockY = floor(uv.y * 8.0 + seed);
     float blockX = floor(uv.x * 12.0 + seed * 0.7);
     float blockRnd = fract(sin(blockY * 341.2 + blockX * 132.7 + seed * 78.3) * 5765.3);
@@ -155,6 +210,16 @@ void main() {
     float noiseLine = fract(sin(uv.y * u_resolution.y * 0.5 + u_time * 200.0) * 43758.5);
     float vhsMask = step(0.97 - chaos * 0.05, noiseLine);
     col += vec3(vhsMask * 0.08 * glitchAmount);
+  }
+
+  // ========================================
+  // 7. Color cycling (hue rotation breathing with audio)
+  // ========================================
+  float cycleAmount = chaos * 0.3;
+  if (cycleAmount > 0.01) {
+    vec3 hsv = rgb2hsv(col);
+    hsv.x = fract(hsv.x + sin(u_time * 0.5) * cycleAmount + u_bass * 0.05);
+    col = hsv2rgb(hsv);
   }
 
   // Clamp output
@@ -175,6 +240,11 @@ export class PostProcessor {
   private sceneTexture: WebGLTexture | null = null;
   private prevFbo: WebGLFramebuffer | null = null;
   private prevTexture: WebGLTexture | null = null;
+  // Temp ping-pong FBOs for multi-pass fractal iteration
+  private tempFboA: WebGLFramebuffer | null = null;
+  private tempTexA: WebGLTexture | null = null;
+  private tempFboB: WebGLFramebuffer | null = null;
+  private tempTexB: WebGLTexture | null = null;
   private fboWidth = 0;
   private fboHeight = 0;
 
@@ -190,7 +260,7 @@ export class PostProcessor {
 
     const names = [
       'u_scene', 'u_prev', 'u_time', 'u_bass', 'u_mid',
-      'u_high', 'u_beat', 'u_coherence', 'u_resolution',
+      'u_high', 'u_beat', 'u_coherence', 'u_resolution', 'u_iteration',
     ];
     for (const n of names) {
       this.uniforms[n] = gl.getUniformLocation(this.program, n);
@@ -236,25 +306,15 @@ export class PostProcessor {
     const gl = this.gl;
     if (!gl || !this.program) return;
 
-    // Render post-process to screen
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
-
     gl.useProgram(this.program);
 
-    // Bind scene texture
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.sceneTexture);
-    if (this.uniforms.u_scene) gl.uniform1i(this.uniforms.u_scene, 0);
+    // Determine fractal iteration count: high coherence = 1, low = up to 3
+    const chaos = 1.0 - opts.coherence;
+    const iterations = Math.max(1, Math.min(3, Math.round(1 + chaos * 2)));
 
-    // Bind previous frame
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.prevTexture);
-    if (this.uniforms.u_prev) gl.uniform1i(this.uniforms.u_prev, 1);
-
-    // Set uniforms
+    // Set common uniforms once
     const u = this.uniforms;
     if (u.u_time) gl.uniform1f(u.u_time, opts.time);
     if (u.u_bass) gl.uniform1f(u.u_bass, opts.bass);
@@ -265,7 +325,47 @@ export class PostProcessor {
     if (u.u_resolution) gl.uniform2f(u.u_resolution, this.fboWidth, this.fboHeight);
 
     gl.bindVertexArray(this.quadVao);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // For multi-pass: alternate writing between tempA and tempB,
+    // feeding each pass's output as u_prev into the next.
+    // Final pass renders to screen (null framebuffer).
+    const tempFbos = [this.tempFboA, this.tempFboB];
+    const tempTexs = [this.tempTexA, this.tempTexB];
+
+    for (let i = 0; i < iterations; i++) {
+      const isLast = i === iterations - 1;
+
+      // Output target: last pass → screen, others → temp FBO
+      if (isLast) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      } else {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, tempFbos[i % 2]);
+        gl.viewport(0, 0, this.fboWidth, this.fboHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+
+      // u_scene is always the original scene
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.sceneTexture);
+      if (u.u_scene) gl.uniform1i(u.u_scene, 0);
+
+      // u_prev: first pass uses prevTexture (last frame), subsequent passes use previous iteration output
+      gl.activeTexture(gl.TEXTURE1);
+      if (i === 0) {
+        gl.bindTexture(gl.TEXTURE_2D, this.prevTexture);
+      } else {
+        // Previous iteration wrote to tempFbos[(i-1)%2], so read its texture
+        gl.bindTexture(gl.TEXTURE_2D, tempTexs[(i - 1) % 2]);
+      }
+      if (u.u_prev) gl.uniform1i(u.u_prev, 1);
+
+      // Iteration index
+      if (u.u_iteration) gl.uniform1i(u.u_iteration, i);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
     gl.bindVertexArray(null);
 
     // Re-enable depth for next frame's scene pass
@@ -307,6 +407,10 @@ export class PostProcessor {
     if (this.sceneTexture) gl.deleteTexture(this.sceneTexture);
     if (this.prevFbo) gl.deleteFramebuffer(this.prevFbo);
     if (this.prevTexture) gl.deleteTexture(this.prevTexture);
+    if (this.tempFboA) gl.deleteFramebuffer(this.tempFboA);
+    if (this.tempTexA) gl.deleteTexture(this.tempTexA);
+    if (this.tempFboB) gl.deleteFramebuffer(this.tempFboB);
+    if (this.tempTexB) gl.deleteTexture(this.tempTexB);
     if (this.depthRb) gl.deleteRenderbuffer(this.depthRb);
 
     // Scene FBO
@@ -326,6 +430,17 @@ export class PostProcessor {
     this.prevFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.prevFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.prevTexture, 0);
+
+    // Temp FBOs for multi-pass fractal iteration
+    this.tempTexA = this.createTexture(gl, w, h);
+    this.tempFboA = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.tempFboA);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tempTexA, 0);
+
+    this.tempTexB = this.createTexture(gl, w, h);
+    this.tempFboB = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.tempFboB);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tempTexB, 0);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
