@@ -1,4 +1,4 @@
-import { AudioEngine } from './audio';
+import { AudioEngine, TONE_PRESETS } from './audio';
 import type { AudioData } from './audio';
 import { Renderer } from './renderer';
 import { PointCloudRenderer } from './renderer-points';
@@ -207,6 +207,25 @@ export class App {
 
     this.ui.onApiKeyChange = (key) => {
       localStorage.setItem('shader-visuals-api-key', key);
+    };
+
+    this.ui.onTonePreset = (presetName) => {
+      if (!presetName) {
+        // Stop tone
+        this.audio.stop();
+        this.ui.setToneActive(false);
+        this.ui.setMicActive(false);
+        this.ui.setMusicActive(false);
+        return;
+      }
+      const preset = TONE_PRESETS.find(p => p.name === presetName);
+      if (preset) {
+        this.audio.initTone(preset);
+        this.ui.setToneActive(true);
+        this.ui.setMicActive(false);
+        this.ui.setMusicActive(false);
+        this.ui.showToast(`🔊 ${preset.name} — ${preset.fundamental}Hz`, 2000);
+      }
     };
 
     this.ui.onFormChange = (value) => {

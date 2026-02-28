@@ -1,6 +1,104 @@
 // Audio engine — Web Audio API + FFT + beat detection
-// Supports two modes: mic input OR file playback
+// Supports three modes: mic input, file playback, or generative tone synthesis
 // 8 frequency bands + backward-compat bass/mid/high
+
+// ── Generative Tone Synthesis ──
+// Creates creatures from nothing using cymatics principles:
+// - Fundamental tone defines scale/boundary
+// - Integer harmonics define complexity (more = more creature-like)
+// - Golden ratio (φ = 1.618) harmonic breaks symmetry → organic form
+// - Beating pair (close frequencies) creates breathing/pulsation → apparent life
+// - All routed through FFT analyser so shaders react to the generated frequencies
+
+export interface TonePreset {
+  name: string;
+  fundamental: number;       // Hz
+  harmonics: number[];       // multipliers (e.g. [2, 3, 4] = integer harmonics)
+  harmonicGains: number[];   // gain per harmonic (0-1)
+  goldenRatio: boolean;      // add φ×fundamental
+  goldenGain: number;        // gain of golden ratio tone
+  beatFreq: number;          // Hz offset for beating (0 = no beat)
+  beatGain: number;          // gain of beating oscillator
+  lfoRate: number;           // Hz — slow modulation of amplitudes
+  lfoDepth: number;          // 0-1 — how much LFO affects gains
+}
+
+export const TONE_PRESETS: TonePreset[] = [
+  {
+    name: 'Embryo',
+    fundamental: 40,
+    harmonics: [2, 3, 5],
+    harmonicGains: [0.6, 0.4, 0.2],
+    goldenRatio: true,
+    goldenGain: 0.35,
+    beatFreq: 2.5,
+    beatGain: 0.5,
+    lfoRate: 0.15,
+    lfoDepth: 0.6,
+  },
+  {
+    name: 'Leviathan',
+    fundamental: 28,
+    harmonics: [2, 3, 4, 7],
+    harmonicGains: [0.7, 0.5, 0.3, 0.15],
+    goldenRatio: true,
+    goldenGain: 0.4,
+    beatFreq: 1.5,
+    beatGain: 0.6,
+    lfoRate: 0.08,
+    lfoDepth: 0.8,
+  },
+  {
+    name: 'Insect',
+    fundamental: 110,
+    harmonics: [2, 3, 5, 8, 13],
+    harmonicGains: [0.5, 0.4, 0.35, 0.25, 0.15],
+    goldenRatio: true,
+    goldenGain: 0.3,
+    beatFreq: 5,
+    beatGain: 0.4,
+    lfoRate: 0.4,
+    lfoDepth: 0.5,
+  },
+  {
+    name: 'Jellyfish',
+    fundamental: 55,
+    harmonics: [2, 4],
+    harmonicGains: [0.5, 0.25],
+    goldenRatio: true,
+    goldenGain: 0.5,
+    beatFreq: 0.8,
+    beatGain: 0.7,
+    lfoRate: 0.05,
+    lfoDepth: 0.9,
+  },
+  {
+    name: 'Swarm',
+    fundamental: 80,
+    harmonics: [2, 3, 5, 7, 11],
+    harmonicGains: [0.5, 0.45, 0.4, 0.3, 0.2],
+    goldenRatio: true,
+    goldenGain: 0.25,
+    beatFreq: 7,
+    beatGain: 0.35,
+    lfoRate: 0.6,
+    lfoDepth: 0.4,
+  },
+  {
+    name: 'Chladni',
+    fundamental: 60,
+    harmonics: [2, 3, 4, 5, 6],
+    harmonicGains: [0.6, 0.5, 0.4, 0.3, 0.2],
+    goldenRatio: false,
+    goldenGain: 0,
+    beatFreq: 3,
+    beatGain: 0.45,
+    lfoRate: 0.2,
+    lfoDepth: 0.7,
+  },
+];
+
+const PHI = 1.6180339887;
 
 export interface AudioData {
   u_band0: number; // sub-bass  20-60 Hz
@@ -29,7 +127,7 @@ export class AudioEngine {
   private freqData = new Uint8Array(0);
   private active = false;
   private failed = false;
-  private mode: 'none' | 'mic' | 'file' = 'none';
+  private mode: 'none' | 'mic' | 'file' | 'tone' = 'none';
 
   // Beat detection state
   private rollingAvg = 0;
@@ -40,6 +138,14 @@ export class AudioEngine {
 
   // Smoothing factor
   private readonly smooth = 0.8;
+
+  // ── Tone synthesis state ──
+  private toneOscillators: OscillatorNode[] = [];
+  private toneGains: GainNode[] = [];
+  private toneLfo: OscillatorNode | null = null;
+  private toneLfoGain: GainNode | null = null;
+  private toneMaster: GainNode | null = null;
+  private currentPreset: TonePreset | null = null;
 
   private ensureContext(): AudioContext {
     if (!this.ctx) {
@@ -110,6 +216,129 @@ export class AudioEngine {
     this.audioElement.play();
   }
 
+  /** Start generative tone synthesis — creates a creature from sound */
+  initTone(preset: TonePreset): void {
+    this.cleanup();
+    const ctx = this.ensureContext();
+    const analyser = this.ensureAnalyser();
+
+    // Master gain → analyser → destination
+    this.toneMaster = ctx.createGain();
+    this.toneMaster.gain.value = 0.3; // keep volume sane
+    this.toneMaster.connect(analyser);
+    analyser.connect(ctx.destination);
+
+    const f0 = preset.fundamental;
+    const now = ctx.currentTime;
+
+    // LFO for amplitude modulation (breathing)
+    if (preset.lfoRate > 0 && preset.lfoDepth > 0) {
+      this.toneLfo = ctx.createOscillator();
+      this.toneLfo.type = 'sine';
+      this.toneLfo.frequency.value = preset.lfoRate;
+
+      this.toneLfoGain = ctx.createGain();
+      // LFO output range: -lfoDepth to +lfoDepth
+      this.toneLfoGain.gain.value = preset.lfoDepth * 0.5;
+      this.toneLfo.connect(this.toneLfoGain);
+      this.toneLfo.start(now);
+    }
+
+    // Helper: create an oscillator at a frequency with a gain
+    const makeOsc = (freq: number, gain: number, type: OscillatorType = 'sine'): void => {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+
+      const g = ctx.createGain();
+      g.gain.value = gain;
+
+      // Connect LFO to modulate this voice's gain
+      if (this.toneLfoGain) {
+        this.toneLfoGain.connect(g.gain);
+      }
+
+      osc.connect(g);
+      g.connect(this.toneMaster!);
+      osc.start(now);
+
+      this.toneOscillators.push(osc);
+      this.toneGains.push(g);
+    };
+
+    // 1. Fundamental
+    makeOsc(f0, 0.8);
+
+    // 2. Integer harmonics — increasing complexity
+    for (let i = 0; i < preset.harmonics.length; i++) {
+      const mult = preset.harmonics[i];
+      const gain = preset.harmonicGains[i] ?? 0.3;
+      makeOsc(f0 * mult, gain);
+    }
+
+    // 3. Golden ratio harmonic — breaks symmetry, creates organic form
+    if (preset.goldenRatio && preset.goldenGain > 0) {
+      makeOsc(f0 * PHI, preset.goldenGain);
+      // Also add φ² for deeper quasi-periodicity
+      makeOsc(f0 * PHI * PHI, preset.goldenGain * 0.4);
+    }
+
+    // 4. Beating pair — two close frequencies create pulsation (apparent life)
+    if (preset.beatFreq > 0 && preset.beatGain > 0) {
+      makeOsc(f0 + preset.beatFreq, preset.beatGain);
+      // The interference between f0 and f0+beatFreq creates an envelope
+      // at beatFreq Hz — this IS the creature's heartbeat
+    }
+
+    this.currentPreset = preset;
+    this.mode = 'tone';
+    this.active = true;
+    if (ctx.state === 'suspended') ctx.resume();
+  }
+
+  /** Change the fundamental frequency while keeping the same preset shape */
+  setToneFundamental(freq: number): void {
+    if (this.mode !== 'tone' || !this.currentPreset) return;
+    // Rebuild with new fundamental
+    const preset = { ...this.currentPreset, fundamental: freq };
+    this.initTone(preset);
+  }
+
+  /** Set master volume for tone mode (0-1) */
+  setToneVolume(vol: number): void {
+    if (this.toneMaster) {
+      this.toneMaster.gain.value = Math.max(0, Math.min(1, vol)) * 0.3;
+    }
+  }
+
+  get tonePreset(): TonePreset | null {
+    return this.currentPreset;
+  }
+
+  private cleanupTone(): void {
+    for (const osc of this.toneOscillators) {
+      try { osc.stop(); osc.disconnect(); } catch {}
+    }
+    this.toneOscillators = [];
+    for (const g of this.toneGains) {
+      try { g.disconnect(); } catch {}
+    }
+    this.toneGains = [];
+    if (this.toneLfo) {
+      try { this.toneLfo.stop(); this.toneLfo.disconnect(); } catch {}
+      this.toneLfo = null;
+    }
+    if (this.toneLfoGain) {
+      try { this.toneLfoGain.disconnect(); } catch {}
+      this.toneLfoGain = null;
+    }
+    if (this.toneMaster) {
+      try { this.toneMaster.disconnect(); } catch {}
+      this.toneMaster = null;
+    }
+    this.currentPreset = null;
+  }
+
   private cleanup(): void {
     // Stop mic
     if (this.stream) {
@@ -127,7 +356,9 @@ export class AudioEngine {
       this.source.disconnect();
       this.source = null;
     }
-    // Disconnect analyser from destination (file mode connects it)
+    // Stop tone synthesis
+    this.cleanupTone();
+    // Disconnect analyser from destination (file/tone mode connects it)
     if (this.analyser) {
       try { this.analyser.disconnect(); } catch {}
     }

@@ -1,5 +1,7 @@
 // Overlay UI — glassmorphism controls, settings panel, toast notifications
 
+import { TONE_PRESETS } from './audio';
+
 const STORAGE_KEY = 'shader-visuals-api-key';
 const AUTO_HIDE_MS = 5000;
 
@@ -18,6 +20,7 @@ export class UI {
   onDownload: (() => void) | null = null;
   onPanoramaToggle: ((enabled: boolean) => void) | null = null;
   onJourneyToggle: ((enabled: boolean) => void) | null = null;
+  onTonePreset: ((presetName: string | null) => void) | null = null;
 
   private overlay!: HTMLElement;
   private toastEl!: HTMLElement;
@@ -218,6 +221,62 @@ export class UI {
       this.resetAutoHide();
     });
 
+    // Tone synthesis button + dropdown
+    const toneContainer = el('div', 'sv-tone-container');
+    toneContainer.style.cssText = 'position:relative;';
+    const toneBtn = el('button', 'sv-btn sv-btn-icon') as HTMLButtonElement;
+    toneBtn.innerHTML = toneIcon;
+    toneBtn.title = 'Generative tone synthesis';
+    const toneDropdown = el('div', 'sv-tone-dropdown sv-hidden');
+    let toneActive = false;
+    let activeTonePreset: string | null = null;
+
+    for (const preset of TONE_PRESETS) {
+      const item = el('div', 'sv-tone-item') as HTMLElement;
+      item.textContent = `${preset.name} (${preset.fundamental}Hz)`;
+      item.dataset.name = preset.name;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (activeTonePreset === preset.name) {
+          // Toggle off
+          activeTonePreset = null;
+          toneActive = false;
+          toneBtn.classList.remove('sv-active');
+          this.onTonePreset?.(null);
+        } else {
+          activeTonePreset = preset.name;
+          toneActive = true;
+          toneBtn.classList.add('sv-active');
+          this.onTonePreset?.(preset.name);
+        }
+        // Update active state visual
+        toneDropdown.querySelectorAll('.sv-tone-item').forEach(el => {
+          (el as HTMLElement).classList.toggle('sv-tone-active', el.textContent?.startsWith(activeTonePreset || '###') || false);
+        });
+        toneDropdown.classList.add('sv-hidden');
+        this.resetAutoHide();
+      });
+      toneDropdown.appendChild(item);
+    }
+
+    toneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (toneActive) {
+        // Quick toggle off
+        activeTonePreset = null;
+        toneActive = false;
+        toneBtn.classList.remove('sv-active');
+        this.onTonePreset?.(null);
+        toneDropdown.classList.add('sv-hidden');
+      } else {
+        toneDropdown.classList.toggle('sv-hidden');
+      }
+      this.resetAutoHide();
+    });
+
+    toneContainer.appendChild(toneBtn);
+    toneContainer.appendChild(toneDropdown);
+
     // Download button
     this.downloadBtn = el('button', 'sv-btn sv-btn-icon') as HTMLButtonElement;
     this.downloadBtn.innerHTML = downloadIcon;
@@ -248,6 +307,7 @@ export class UI {
     toolbar.appendChild(this.micBtn);
     toolbar.appendChild(this.musicBtn);
     toolbar.appendChild(this.fileInput);
+    toolbar.appendChild(toneContainer);
     toolbar.appendChild(this.downloadBtn);
     toolbar.appendChild(resetBtn);
     toolbar.appendChild(this.settingsBtn);
@@ -522,6 +582,11 @@ export class UI {
     this.musicBtn.classList.toggle('sv-active', active);
   }
 
+  setToneActive(_active: boolean): void {
+    // Tone button state is managed internally by the tone container
+    // This is called to sync state when other audio modes activate
+  }
+
   setDownloadVisible(visible: boolean): void {
     this.downloadBtn.style.display = visible ? '' : 'none';
   }
@@ -606,6 +671,8 @@ const gearIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" st
 </svg>`;
 
 const downloadIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+
+const toneIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h2l3-9 4 18 4-18 3 9h4"/></svg>`;
 
 const spinnerIcon = `<svg class="sv-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg>`;
 
@@ -924,6 +991,47 @@ const CSS = `
 .sv-toast.sv-toast-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── Tone dropdown ───────────────────────────────── */
+.sv-tone-container {
+  position: relative;
+}
+.sv-tone-dropdown {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--sv-bg-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-sm);
+  padding: 6px;
+  min-width: 180px;
+  z-index: 10;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.sv-tone-dropdown.sv-hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+  pointer-events: none !important;
+}
+.sv-tone-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--sv-text);
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.sv-tone-item:hover {
+  background: rgba(255,255,255,0.1);
+}
+.sv-tone-item.sv-tone-active {
+  background: var(--sv-accent);
+  font-weight: 600;
 }
 
 /* ── Spinner animation ───────────────────────────── */
