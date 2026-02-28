@@ -416,14 +416,35 @@ export class UI {
     const t = el('div', 'sv-toast');
     t.textContent = message;
     this.toastEl.appendChild(t);
-    // Trigger enter animation
     requestAnimationFrame(() => t.classList.add('sv-toast-visible'));
     setTimeout(() => {
       t.classList.remove('sv-toast-visible');
       t.addEventListener('transitionend', () => t.remove());
-      // Fallback removal
       setTimeout(() => t.remove(), 500);
     }, duration);
+  }
+
+  /** Show an error that stays on screen until tapped, with full scrollable text */
+  showError(message: string): void {
+    const overlay = el('div', 'sv-error-overlay');
+    const box = el('div', 'sv-error-box');
+    const title = el('div', 'sv-error-title');
+    title.textContent = '⚠️ Error';
+    const body = el('div', 'sv-error-body');
+    body.textContent = message;
+    const dismiss = el('button', 'sv-btn sv-btn-primary sv-error-dismiss') as HTMLButtonElement;
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', (e) => {
+      e.stopPropagation();
+      overlay.remove();
+    });
+    overlay.addEventListener('click', () => overlay.remove());
+    box.addEventListener('click', (e) => e.stopPropagation());
+    box.appendChild(title);
+    box.appendChild(body);
+    box.appendChild(dismiss);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
   }
 
   /** Show clickable segment list. Clicking a segment highlights it on the scene. */
@@ -991,6 +1012,53 @@ const CSS = `
 .sv-toast.sv-toast-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ── Error overlay ───────────────────────────────── */
+.sv-error-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.sv-error-box {
+  background: var(--sv-bg-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,100,100,0.3);
+  border-radius: var(--sv-radius);
+  padding: 24px;
+  max-width: 400px;
+  width: 100%;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sv-error-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ff6b6b;
+}
+.sv-error-body {
+  font-size: 13px;
+  color: var(--sv-text);
+  line-height: 1.5;
+  overflow-y: auto;
+  max-height: 50vh;
+  word-break: break-word;
+  white-space: pre-wrap;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  background: rgba(0,0,0,0.3);
+  padding: 12px;
+  border-radius: 8px;
+}
+.sv-error-dismiss {
+  margin-top: 4px;
 }
 
 /* ── Tone dropdown ───────────────────────────────── */

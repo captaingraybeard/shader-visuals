@@ -328,7 +328,7 @@ export class App {
       this.setMode('scene');
       this.ui.setDownloadVisible(false);
     } catch (e) {
-      this.ui.showToast(`Failed: ${(e as Error).message}`, 4000);
+      this.ui.showError((e as Error).message);
     } finally {
       this.ui.setLoading(false);
       if (isJourney) this.journeyGenerating = false;
