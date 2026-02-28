@@ -17,6 +17,7 @@ export class UI {
   onFormChange: ((value: number) => void) | null = null;
   onDownload: (() => void) | null = null;
   onPanoramaToggle: ((enabled: boolean) => void) | null = null;
+  onJourneyToggle: ((enabled: boolean) => void) | null = null;
 
   private overlay!: HTMLElement;
   private toastEl!: HTMLElement;
@@ -80,6 +81,17 @@ export class UI {
       panoBtn.classList.toggle('sv-active', panoActive);
       localStorage.setItem('shader-visuals-panorama', String(panoActive));
       this.onPanoramaToggle?.(panoActive);
+    });
+
+    // Journey mode toggle
+    const journeyBtn = el('button', 'sv-btn sv-btn-pano') as HTMLButtonElement;
+    journeyBtn.textContent = '∞';
+    journeyBtn.title = 'Journey mode — continuous scene generation';
+    let journeyActive = false;
+    journeyBtn.addEventListener('click', () => {
+      journeyActive = !journeyActive;
+      journeyBtn.classList.toggle('sv-active', journeyActive);
+      this.onJourneyToggle?.(journeyActive);
     });
 
     // Preset buttons row
@@ -298,6 +310,7 @@ export class UI {
     // Assemble panel
     generateRow.appendChild(this.generateBtn);
     generateRow.appendChild(panoBtn);
+    generateRow.appendChild(journeyBtn);
 
     this.panel.appendChild(this.sceneInput);
     this.panel.appendChild(this.vibeInput);

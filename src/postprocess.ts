@@ -88,10 +88,25 @@ void main() {
   bloom /= total;
   col += bloom * bloomStrength;
 
-  // === Frame feedback / trails (more at low coherence) ===
+  // === Frame feedback / trails with UV warp (TouchDesigner-style melt) ===
   float trailAmount = smoothstep(0.8, 0.3, u_coherence) * 0.7;
   if (trailAmount > 0.01) {
-    vec3 prev = texture(u_prev, v_uv).rgb;
+    // Warp UV when sampling previous frame for feedback
+    vec2 fbUV = v_uv;
+    float warpIntensity = chaos; // high chaos = trippy melt, high coherence = clean
+
+    // Bass drives radial zoom (UV pulls toward/away from center)
+    vec2 toCenter = fbUV - 0.5;
+    float radialZoom = 1.0 + u_bass * 0.015 * warpIntensity;
+    fbUV = 0.5 + toCenter * radialZoom;
+
+    // Mid drives rotation
+    float rotAngle = u_mid * 0.02 * warpIntensity;
+    float cs = cos(rotAngle), sn = sin(rotAngle);
+    vec2 centered = fbUV - 0.5;
+    fbUV = vec2(centered.x * cs - centered.y * sn, centered.x * sn + centered.y * cs) + 0.5;
+
+    vec3 prev = texture(u_prev, fbUV).rgb;
     col = mix(col, max(col, prev * 0.95), trailAmount);
   }
 
@@ -101,6 +116,45 @@ void main() {
     vec3 hsv = rgb2hsv(col);
     hsv.x = fract(hsv.x + sin(u_time * 0.5) * cycleAmount + u_bass * 0.05);
     col = hsv2rgb(hsv);
+  }
+
+  // === Glitch effects (digital, driven by beat * chaos) ===
+  float glitchAmount = u_beat * chaos;
+  if (glitchAmount > 0.05) {
+    // Pseudo-random helpers
+    float seed = floor(u_time * 12.0); // changes ~12x/sec for blocky feel
+    float rnd1 = fract(sin(seed * 43758.5453) * 2183.5);
+    float rnd2 = fract(sin(seed * 12345.678) * 4375.8);
+
+    // Horizontal scanline displacement: random rows shift left/right
+    float scanlineY = floor(uv.y * u_resolution.y / 3.0); // every 3 pixels
+    float scanShift = fract(sin(scanlineY * 91.2 + seed * 47.3) * 4758.5) - 0.5;
+    float scanMask = step(0.92 - chaos * 0.3, fract(sin(scanlineY * 173.1 + seed) * 2847.3));
+    vec2 scanUV = uv + vec2(scanShift * 0.03 * glitchAmount * scanMask, 0.0);
+
+    // RGB channel separation (blocky/digital — separate from smooth CA)
+    float rgbSplit = glitchAmount * 0.01;
+    float splitR = texture(u_scene, scanUV + vec2(rgbSplit, 0.0)).r;
+    float splitB = texture(u_scene, scanUV - vec2(rgbSplit, 0.0)).b;
+    col.r = mix(col.r, splitR, glitchAmount * 0.5);
+    col.b = mix(col.b, splitB, glitchAmount * 0.5);
+
+    // Block glitch: rectangular regions randomly offset
+    float blockY = floor(uv.y * 8.0 + seed);
+    float blockX = floor(uv.x * 12.0 + seed * 0.7);
+    float blockRnd = fract(sin(blockY * 341.2 + blockX * 132.7 + seed * 78.3) * 5765.3);
+    if (blockRnd > 1.0 - chaos * 0.15) {
+      vec2 blockOffset = vec2(
+        (fract(sin(blockY * 754.3 + seed) * 3425.7) - 0.5) * 0.06,
+        0.0
+      ) * glitchAmount;
+      col = mix(col, texture(u_scene, uv + blockOffset).rgb, glitchAmount * 0.4);
+    }
+
+    // VHS-style noise lines
+    float noiseLine = fract(sin(uv.y * u_resolution.y * 0.5 + u_time * 200.0) * 43758.5);
+    float vhsMask = step(0.97 - chaos * 0.05, noiseLine);
+    col += vec3(vhsMask * 0.08 * glitchAmount);
   }
 
   // Clamp output

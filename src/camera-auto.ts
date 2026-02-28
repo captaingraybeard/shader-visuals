@@ -17,6 +17,7 @@ export class AutoCamera {
   private posX = 0;
   private posY = 0;
   private posZ = 3.0;
+  private forwardZ = 0;   // accumulated forward drift
   private theta = 0;      // horizontal look offset
   private phi = 0;        // vertical look offset
   private targetTheta = 0;
@@ -41,6 +42,7 @@ export class AutoCamera {
     this.posX = 0;
     this.posY = 0;
     this.posZ = 3.0;
+    this.forwardZ = 0;
     this.yaw = 0;
     this.pitch = 0;
     this.targetYaw = 0;
@@ -88,10 +90,14 @@ export class AutoCamera {
     this.theta += (this.targetTheta - this.theta) * lerpRate;
     this.phi += (this.targetPhi - this.phi) * lerpRate;
 
+    // Continuous forward drift (-Z) — "flying through space"
+    const forwardSpeed = 0.3 + bass * 0.5;
+    this.forwardZ -= forwardSpeed * dt;
+
     const driftScale = 1.2 + bass * 0.4;
     this.posX = Math.sin(this.phase * 0.07) * driftScale;
     this.posY = Math.sin(this.phase * 0.05) * 0.5;
-    this.posZ = 3.0 + Math.sin(this.phase * 0.04) * 1.0 + bass * 0.3;
+    this.posZ = 3.0 + this.forwardZ + Math.sin(this.phase * 0.04) * 1.0 + bass * 0.3;
   }
 
   private updateSphere(dt: number, bass: number, mid: number, beat: number): void {

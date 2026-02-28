@@ -33,6 +33,16 @@ export class App {
   private running = false;
   private lastFrameTime = 0;
 
+  // Journey mode (continuous auto-generation)
+  private journeyMode = false;
+  private journeyGenerating = false;
+  private journeyVariation = 1;
+  private lastGenerateTime = 0;
+  private lastPrompt = '';
+  private lastVibe = '';
+  private lastImageMode: 'standard' | 'panorama' = 'standard';
+  private lastProjection: ProjectionMode = 'planar';
+
   // Scene canvas and shared GL context
   private sceneCanvas: HTMLCanvasElement | null = null;
   private sceneGL: WebGL2RenderingContext | null = null;
@@ -136,52 +146,17 @@ export class App {
 
   private wireUI(): void {
     this.ui.onGenerate = async (scene, _vibe) => {
-      const apiKey = localStorage.getItem('shader-visuals-api-key') || '';
-      if (!apiKey) {
-        this.ui.showToast('Set your OpenAI API key in settings first', 3000);
-        return;
-      }
-      const prompt = scene.trim() || 'a beautiful landscape';
+      await this.generateScene(scene, _vibe);
+    };
 
-      const imageMode = this.panoramaMode ? 'panorama' as const : 'standard' as const;
-      const projection: ProjectionMode = this.panoramaMode ? 'equirectangular' : 'planar';
-
-      this.ui.setLoading(true, this.panoramaMode ? 'Generating 360° panorama...' : 'Generating image...');
-      try {
-        const result = await generateFromServer(
-          prompt, _vibe, imageMode, apiKey,
-          (msg) => this.ui.setLoading(true, msg),
-        );
-
-        this.pointRenderer.setPointCloud(result.cloud);
-        this.camera.setMode(projection);
-        this.camera.resetForNewScene();
-
-        const timing = result.metadata.timing as Record<string, number> | undefined;
-        const totalSec = timing?.total_ms ? (timing.total_ms / 1000).toFixed(1) : '?';
-        this.ui.showToast(
-          `${(result.cloud.count/1000).toFixed(0)}K pts | Server ${totalSec}s`,
-          5000,
-        );
-
-        if (result.labels.length > 0) {
-          this.ui.showSegmentPanel(result.labels, (cat) => {
-            this.highlightCat = cat === null ? -1 : cat;
-          });
-        }
-
-        // Clear client-side download data (server doesn't return raw images to client yet)
-        this.lastDepthMap = null;
-        this.lastSegments = null;
-        this.lastImageDataUrl = null;
-
-        this.hasScene = true;
-        this.setMode('scene');
-        this.ui.setDownloadVisible(false); // TODO: enable when server assets are fetchable
-      } catch (e) {
-        this.ui.showToast(`Failed: ${(e as Error).message}`, 4000);
-      } finally {
-        this.ui.setLoading(false);
+    this.ui.onJourneyToggle = (enabled) => {
+      this.journeyMode = enabled;
+      this.journeyVariation = 1;
+      this.journeyGenerating = false;
+      if (enabled) {
+        this.ui.showToast('Journey mode ON — continuous generation', 2000);
+      } else {
+        this.ui.showToast('Journey mode OFF', 2000);
       }
     };
 
@@ -277,6 +252,83 @@ export class App {
     };
   }
 
+  // ── Scene generation ─────────────────────────────
+
+  private async generateScene(scene: string, vibe: string, isJourney = false): Promise<void> {
+    const apiKey = localStorage.getItem('shader-visuals-api-key') || '';
+    if (!apiKey) {
+      this.ui.showToast('Set your OpenAI API key in settings first', 3000);
+      return;
+    }
+    const prompt = scene.trim() || 'a beautiful landscape';
+
+    const imageMode = this.panoramaMode ? 'panorama' as const : 'standard' as const;
+    const projection: ProjectionMode = this.panoramaMode ? 'equirectangular' : 'planar';
+
+    // Store for journey mode re-use
+    this.lastPrompt = prompt;
+    this.lastVibe = vibe;
+    this.lastImageMode = imageMode;
+    this.lastProjection = projection;
+
+    const loadingMsg = isJourney
+      ? `Journey: generating variation ${this.journeyVariation}...`
+      : this.panoramaMode ? 'Generating 360° panorama...' : 'Generating image...';
+    this.ui.setLoading(true, loadingMsg);
+
+    try {
+      const serverPrompt = isJourney ? `${prompt} variation ${this.journeyVariation}` : prompt;
+      const result = await generateFromServer(
+        serverPrompt, vibe, imageMode, apiKey,
+        (msg) => this.ui.setLoading(true, isJourney ? `Journey v${this.journeyVariation}: ${msg}` : msg),
+      );
+
+      this.pointRenderer.setPointCloud(result.cloud);
+      this.camera.setMode(projection);
+      this.camera.resetForNewScene();
+
+      const timing = result.metadata.timing as Record<string, number> | undefined;
+      const totalSec = timing?.total_ms ? (timing.total_ms / 1000).toFixed(1) : '?';
+      this.ui.showToast(
+        `${(result.cloud.count/1000).toFixed(0)}K pts | Server ${totalSec}s`,
+        5000,
+      );
+
+      if (result.labels.length > 0) {
+        this.ui.showSegmentPanel(result.labels, (cat) => {
+          this.highlightCat = cat === null ? -1 : cat;
+        });
+      }
+
+      this.lastDepthMap = null;
+      this.lastSegments = null;
+      this.lastImageDataUrl = null;
+
+      this.hasScene = true;
+      this.lastGenerateTime = performance.now() / 1000;
+      this.setMode('scene');
+      this.ui.setDownloadVisible(false);
+    } catch (e) {
+      this.ui.showToast(`Failed: ${(e as Error).message}`, 4000);
+    } finally {
+      this.ui.setLoading(false);
+      if (isJourney) this.journeyGenerating = false;
+    }
+  }
+
+  private tickJourney(): void {
+    if (!this.journeyMode || this.journeyGenerating || !this.hasScene) return;
+    if (!this.audio.isActive) return; // pause when no audio
+
+    const now = performance.now() / 1000;
+    const elapsed = now - this.lastGenerateTime;
+    if (elapsed < 15) return; // minimum 15s between generations
+
+    this.journeyGenerating = true;
+    this.journeyVariation++;
+    this.generateScene(this.lastPrompt, this.lastVibe, true);
+  }
+
   // ── Render loop ───────────────────────────────────
 
   private loop = (): void => {
@@ -287,6 +339,9 @@ export class App {
     const time = now - this.startTime;
     const dt = now - this.lastFrameTime;
     this.lastFrameTime = now;
+
+    // Journey mode: auto-generate next scene
+    this.tickJourney();
 
     if (this.mode === 'scene' && this.hasScene) {
       this.renderScene(time, dt, audioData);
