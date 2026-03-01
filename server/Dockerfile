@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python deps (torch already in base image, will be upgraded to 2.7+)
 COPY server/requirements-runpod.txt requirements.txt
+
+# Install realesrgan + basicsr. basicsr compiles CUDA extensions — use JIT mode
+# so they compile at runtime (when GPU is available) not at build time.
+ENV BASICSR_JIT=True
+ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy server code
