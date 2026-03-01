@@ -314,11 +314,19 @@ export class App {
     const projection = this.camera.getProjectionMatrix(aspect);
     const view = this.camera.getViewMatrix();
 
-    // Render point cloud scene
+    // Handle resize
+    const cw = canvas.clientWidth * dpr;
+    const ch = canvas.clientHeight * dpr;
+    if (canvas.width !== cw || canvas.height !== ch) {
+      this.threeScene.resize();
+      this.postprocess.resize(cw, ch);
+    }
+
+    // Update scene graph (uniforms, camera, crossfade) — does NOT render
     if (this.threeScene.hasCloud) {
       const pointScale = Math.max(1.5, Math.min(5, (canvas.clientWidth / 300) * dpr));
 
-      this.threeScene.render({
+      this.threeScene.update({
         projection,
         view,
         time,
@@ -342,7 +350,7 @@ export class App {
       });
     }
 
-    // Post-processing (includes DMT overlay at low coherence)
+    // Post-processing renders the scene via RenderPass + all effects
     this.postprocess.render({
       time,
       bass: audioData.u_bass,

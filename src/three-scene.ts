@@ -314,7 +314,12 @@ function mat4FromArray(arr: Float32Array): THREE.Matrix4 {
   return m;
 }
 
-/* ── ThreeScene ── */
+/* ── ThreeScene ──
+ * Scene-graph-only: manages point cloud meshes and uniforms.
+ * Does NOT render — the EffectComposer's RenderPass handles that.
+ * Both current and prev clouds are visible simultaneously during crossfade,
+ * blended via u_transition alpha in the shader.
+ */
 export class ThreeScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -334,10 +339,14 @@ export class ThreeScene {
       alpha: false,
       antialias: false,
     });
-    this.renderer.autoClear = false;
+    // Let EffectComposer handle clearing
+    this.renderer.autoClear = true;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+    // We set matrices manually from camera-auto.ts
+    this.camera.matrixAutoUpdate = false;
+    this.camera.matrixWorldAutoUpdate = false;
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -349,7 +358,6 @@ export class ThreeScene {
 
   /** Upload a new point cloud. Crossfades from previous if one exists. */
   setPointCloud(data: PointCloudData): void {
-    // Move current → prev for crossfade
     if (this.current) {
       this.disposePrev();
       this.prev = this.current;
@@ -361,24 +369,16 @@ export class ThreeScene {
     this.scene.add(this.current.points);
   }
 
-  render(opts: RenderOpts): void {
-    const r = this.renderer;
-    const gl = r.getContext();
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-
+  /**
+   * Update scene graph state (uniforms, camera, crossfade).
+   * Does NOT call renderer.render — EffectComposer does that.
+   */
+  update(opts: RenderOpts): void {
     // Apply external camera matrices (from camera-auto.ts Float32Arrays)
     this.camera.projectionMatrix.copy(mat4FromArray(opts.projection));
     this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
     this.camera.matrixWorldInverse.copy(mat4FromArray(opts.view));
     this.camera.matrixWorld.copy(this.camera.matrixWorldInverse).invert();
-    // Prevent Three.js from overwriting our matrices
-    this.camera.matrixAutoUpdate = false;
-    this.camera.matrixWorldAutoUpdate = false;
-
-    r.setClearColor(0x000000, 1);
-    r.clear(true, true, false);
-
-    // GL_VERTEX_PROGRAM_POINT_SIZE is always enabled in WebGL2
 
     // Crossfade progress
     let crossT = 1.0;
@@ -386,23 +386,21 @@ export class ThreeScene {
       crossT = Math.min((performance.now() - this.crossfadeStart) / this.crossfadeDuration, 1.0);
     }
 
-    // Draw previous cloud fading out
-    if (this.crossfading && this.prev) {
-      this.updateUniforms(this.prev.material, opts, 1.0 - crossT);
-      this.prev.points.visible = true;
-      if (this.current) this.current.points.visible = false;
-      r.render(this.scene, this.camera);
+    // Both clouds visible simultaneously during crossfade.
+    // Shader uses u_transition as alpha — prev fades out, current fades in.
+    if (this.prev) {
+      this.prev.points.visible = this.crossfading;
+      if (this.crossfading) {
+        this.updateUniforms(this.prev.material, opts, 1.0 - crossT);
+      }
     }
 
-    // Draw current cloud fading in
     if (this.current) {
-      this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
       this.current.points.visible = true;
-      if (this.prev) this.prev.points.visible = false;
-      r.render(this.scene, this.camera);
+      this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
     }
 
-    // Crossfade complete
+    // Crossfade complete — dispose prev
     if (this.crossfading && crossT >= 1.0) {
       this.disposePrev();
       this.crossfading = false;

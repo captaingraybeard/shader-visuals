@@ -134,15 +134,16 @@ const CombinedShader = {
         col = mix(col, max(col, prevBlend), feedbackMix);
       }
 
-      // 4. Chromatic aberration (beat-driven)
+      // 4. Chromatic aberration (beat-driven, applied to current col via re-sampling)
       float caAmount = u_beat * (0.002 + chaos * 0.008);
       if (caAmount > 0.0001) {
         vec2 caDir = normalize(uv - 0.5 + 0.001) * caAmount;
-        float cr = texture2D(tDiffuse, uv + caDir).r;
-        float cg = texture2D(tDiffuse, uv).g;
-        float cb = texture2D(tDiffuse, uv - caDir).b;
-        vec3 caCol = vec3(cr, cg, cb);
-        col = mix(col, col + (caCol - texture2D(tDiffuse, uv).rgb), 1.0);
+        // Re-sample the input at offset UVs for R and B channels
+        // This captures all prior effects (kaleidoscope, feedback) since they modified uv
+        vec3 colR = texture2D(tDiffuse, uv + caDir).rgb;
+        vec3 colB = texture2D(tDiffuse, uv - caDir).rgb;
+        col.r = mix(col.r, colR.r, 0.5 + chaos * 0.5);
+        col.b = mix(col.b, colB.b, 0.5 + chaos * 0.5);
       }
 
       // 5. Glitch (digital, beat * chaos driven)
