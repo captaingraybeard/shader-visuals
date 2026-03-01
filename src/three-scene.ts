@@ -306,7 +306,7 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_form: { value: 0 },
     u_highlightCat: { value: -1 },
     u_projMode: { value: 0 },
-    u_positionTex: { value: null },
+    u_positionTex: { value: _dummyTexture },
     u_texSize: { value: new THREE.Vector2(1, 1) },
     u_creaturesActive: { value: 0 },
   };
@@ -334,6 +334,12 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
   points.frustumCulled = false;
   return { points, material, geometry };
 }
+
+/* ── Dummy 1x1 texture for unbound sampler (prevents iOS shader failure) ── */
+const _dummyTexture = new THREE.DataTexture(
+  new Float32Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.FloatType,
+);
+_dummyTexture.needsUpdate = true;
 
 /* ── Helper: reusable Matrix4 instances to avoid per-frame allocation ── */
 const _tmpProjection = new THREE.Matrix4();
@@ -368,6 +374,9 @@ export class ThreeScene {
     });
     // Let EffectComposer handle clearing
     this.renderer.autoClear = true;
+
+    // Log shader compilation errors (crucial for iOS debugging)
+    this.renderer.debug.checkShaderErrors = true;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
