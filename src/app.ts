@@ -293,6 +293,11 @@ export class App {
     // Journey mode: auto-generate next scene
     this.tickJourney();
 
+    // Update creature system before rendering
+    if (this.threeScene.hasCloud) {
+      this.threeScene.updateCreatures(dt, audioData, time);
+    }
+
     this.renderScene(time, dt, audioData);
 
     requestAnimationFrame(this.loop);

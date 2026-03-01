@@ -3,6 +3,8 @@
 
 import * as THREE from 'three';
 import type { PointCloudData } from './pointcloud';
+import type { AudioData } from './audio';
+import { CreatureSystem } from './creature-system';
 
 /* ── Vertex Shader (GLSL 300 es, used with THREE.GLSL3) ── */
 const VERT = /* glsl */ `
@@ -36,6 +38,11 @@ uniform float u_form;
 uniform float u_highlightCat;
 uniform float u_projMode;
 
+// Creature system uniforms
+uniform sampler2D u_positionTex;
+uniform vec2 u_texSize;
+uniform float u_creaturesActive;
+
 out vec3 v_color;
 out float v_alpha;
 out float v_coherence;
@@ -46,7 +53,19 @@ float hash(float n) {
 
 void main() {
   float idx = float(gl_VertexID);
-  vec3 pos = a_position;
+  vec3 pos;
+  float recruitment = 0.0;
+  if (u_creaturesActive > 0.5) {
+    int texIdx = gl_VertexID;
+    int texX = texIdx % int(u_texSize.x);
+    int texY = texIdx / int(u_texSize.x);
+    vec2 texUV = (vec2(float(texX), float(texY)) + 0.5) / u_texSize;
+    vec4 posData = texture(u_positionTex, texUV);
+    pos = posData.xyz;
+    recruitment = posData.w;
+  } else {
+    pos = a_position;
+  }
 
   float depthFactor;
   if (u_projMode > 0.5) {
@@ -205,6 +224,12 @@ void main() {
     }
   }
 
+  // Creature recruitment glow
+  if (recruitment > 0.1) {
+    v_color += vec3(0.2, 0.1, 0.4) * recruitment;
+    gl_PointSize += recruitment * 3.0;
+  }
+
   v_alpha = u_transition;
   v_coherence = localCoherence;
 }
@@ -281,6 +306,9 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_form: { value: 0 },
     u_highlightCat: { value: -1 },
     u_projMode: { value: 0 },
+    u_positionTex: { value: null },
+    u_texSize: { value: new THREE.Vector2(1, 1) },
+    u_creaturesActive: { value: 0 },
   };
 }
 
@@ -328,6 +356,8 @@ export class ThreeScene {
   private crossfadeStart = 0;
   private readonly crossfadeDuration = 1500;
 
+  private creatureSystem: CreatureSystem | null = null;
+
   onError: ((msg: string) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -364,6 +394,16 @@ export class ThreeScene {
 
     this.current = buildPoints(data);
     this.scene.add(this.current.points);
+
+    // Initialize creature system
+    if (!this.creatureSystem) {
+      this.creatureSystem = new CreatureSystem(this.renderer, data.count);
+    }
+    this.creatureSystem.setPointCloud(data);
+
+    // Set texture size uniforms on the new material
+    const [texW, texH] = this.creatureSystem.getTexSize();
+    this.current.material.uniforms.u_texSize.value.set(texW, texH);
   }
 
   /**
@@ -424,7 +464,27 @@ export class ThreeScene {
       this.current.material.dispose();
       this.current = null;
     }
+    if (this.creatureSystem) {
+      this.creatureSystem.dispose();
+      this.creatureSystem = null;
+    }
     this.renderer.dispose();
+  }
+
+  /** Update creature system — call each frame before update() */
+  updateCreatures(dt: number, audioData: AudioData, time: number): void {
+    if (!this.creatureSystem || !this.current) return;
+
+    this.creatureSystem.update(dt, audioData, time);
+
+    const active = this.creatureSystem.hasCreatures;
+    const mat = this.current.material;
+    mat.uniforms.u_creaturesActive.value = active ? 1.0 : 0.0;
+
+    if (active) {
+      const tex = this.creatureSystem.getPositionTexture();
+      mat.uniforms.u_positionTex.value = tex;
+    }
   }
 
   private updateUniforms(mat: THREE.ShaderMaterial, opts: RenderOpts, transition: number): void {
