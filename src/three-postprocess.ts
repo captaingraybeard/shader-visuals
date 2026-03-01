@@ -357,72 +357,44 @@ const DMTShader = {
 };
 
 // ---------------------------------------------------------------------------
-// Save pass — copies current composer output to a render target for feedback
-// ---------------------------------------------------------------------------
-
-class SavePass extends ShaderPass {
-  public renderTarget: THREE.WebGLRenderTarget;
-
-  constructor(renderTarget: THREE.WebGLRenderTarget) {
-    super(new THREE.ShaderMaterial({
-      uniforms: { tDiffuse: { value: null } },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D tDiffuse;
-        varying vec2 vUv;
-        void main() {
-          gl_FragColor = texture2D(tDiffuse, vUv);
-        }
-      `,
-    }));
-    this.renderTarget = renderTarget;
-  }
-
-  render(
-    renderer: THREE.WebGLRenderer,
-    writeBuffer: THREE.WebGLRenderTarget,
-    readBuffer: THREE.WebGLRenderTarget,
-    _deltaTime?: number,
-    _maskActive?: boolean,
-  ): void {
-    (this.uniforms as Record<string, THREE.IUniform>)['tDiffuse'].value = readBuffer.texture;
-
-    // Render to our save target
-    renderer.setRenderTarget(this.renderTarget);
-    this.fsQuad.render(renderer);
-
-    // Also pass through to writeBuffer if not rendering to screen
-    if (this.renderToScreen) {
-      renderer.setRenderTarget(null);
-      this.fsQuad.render(renderer);
-    } else {
-      renderer.setRenderTarget(writeBuffer);
-      if (this.clear) renderer.clear();
-      this.fsQuad.render(renderer);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // ThreePostProcess — public API
+//
+// Architecture:
+// - Main composer: RenderPass → CombinedPass → DMTPass → BloomPass (renderToScreen)
+// - Feedback: after each frame, blit the bloom output to prevTarget for next frame
+// - Multi-pass feedback: for iterations > 0, run a separate feedback-only composer
+//   (no RenderPass — scene only renders once) that re-applies CombinedPass
 // ---------------------------------------------------------------------------
+
+// Passthrough shader for copying textures
+const CopyShader = {
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null } },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() { gl_FragColor = texture2D(tDiffuse, vUv); }
+  `,
+};
 
 export class ThreePostProcess {
   private composer!: EffectComposer;
+  private renderPass!: RenderPass;
   private bloomPass!: UnrealBloomPass;
   private combinedPass!: ShaderPass;
   private dmtPass!: ShaderPass;
-  private savePass!: SavePass;
   private prevTarget!: THREE.WebGLRenderTarget;
   private renderer!: THREE.WebGLRenderer;
   private width = 1;
   private height = 1;
+
+  // For multi-pass: a separate mini-composer without RenderPass
+  private feedbackComposer!: EffectComposer;
+  private feedbackInputPass!: ShaderPass;
+  private feedbackCombinedPass!: ShaderPass;
 
   init(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
     this.renderer = renderer;
@@ -436,13 +408,14 @@ export class ThreePostProcess {
       format: THREE.RGBAFormat,
     });
 
+    // ── Main composer: scene → effects → screen ──
     this.composer = new EffectComposer(renderer);
 
-    // 1. Render scene
-    const renderPass = new RenderPass(scene, camera);
-    this.composer.addPass(renderPass);
+    // 1. Render scene (only runs once per frame)
+    this.renderPass = new RenderPass(scene, camera);
+    this.composer.addPass(this.renderPass);
 
-    // 2. Combined effects pass
+    // 2. Combined effects (feedback, kaleidoscope, CA, glitch, color cycling)
     this.combinedPass = new ShaderPass(CombinedShader);
     this.combinedPass.uniforms['u_prev'].value = this.prevTarget.texture;
     this.composer.addPass(this.combinedPass);
@@ -454,15 +427,34 @@ export class ThreePostProcess {
     // 4. Bloom
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(this.width, this.height),
-      0.5, // strength
-      0.4, // radius
-      0.85, // threshold
+      0.5, 0.4, 0.85,
     );
     this.composer.addPass(this.bloomPass);
 
-    // 5. Save pass — copies output to prevTarget for next frame's feedback
-    this.savePass = new SavePass(this.prevTarget);
-    this.composer.addPass(this.savePass);
+    // 5. Final output pass (renders to screen; we grab readBuffer before this for feedback)
+    const outputPass = new ShaderPass(CopyShader);
+    outputPass.renderToScreen = true;
+    this.composer.addPass(outputPass);
+
+    // ── Feedback-only mini-composer (for multi-pass iterations > 0) ──
+    // No RenderPass — takes the previous output as input texture
+    this.feedbackComposer = new EffectComposer(renderer);
+
+    // Input: copy from main composer's output
+    this.feedbackInputPass = new ShaderPass(CopyShader);
+    this.feedbackComposer.addPass(this.feedbackInputPass);
+
+    // Re-apply combined effects (shares uniform values, separate instance)
+    this.feedbackCombinedPass = new ShaderPass(CombinedShader);
+    this.feedbackCombinedPass.uniforms['u_prev'].value = this.prevTarget.texture;
+    this.feedbackComposer.addPass(this.feedbackCombinedPass);
+
+    // Feedback iterations skip bloom (it's subtle per-iteration and saves perf)
+    // The final main pass already has bloom applied.
+    // Output to screen on the last feedback iteration
+    const feedbackOutput = new ShaderPass(CopyShader);
+    feedbackOutput.renderToScreen = true;
+    this.feedbackComposer.addPass(feedbackOutput);
   }
 
   render(opts: {
@@ -476,18 +468,10 @@ export class ThreePostProcess {
     const chaos = 1.0 - opts.coherence;
     const iterations = Math.max(1, Math.min(3, Math.round(1 + chaos * 2)));
 
-    // Update combined pass uniforms
-    const cu = this.combinedPass.uniforms;
-    cu['u_time'].value = opts.time;
-    cu['u_bass'].value = opts.bass;
-    cu['u_mid'].value = opts.mid;
-    cu['u_high'].value = opts.high;
-    cu['u_beat'].value = opts.beat;
-    cu['u_coherence'].value = opts.coherence;
-    cu['u_resolution'].value.set(this.width, this.height);
-    cu['u_prev'].value = this.prevTarget.texture;
+    // Set uniforms on main combined pass
+    this.setEffectUniforms(this.combinedPass, opts, 0);
 
-    // Update DMT pass uniforms
+    // DMT uniforms
     const du = this.dmtPass.uniforms;
     du['u_time'].value = opts.time;
     du['u_bass'].value = opts.bass;
@@ -497,19 +481,26 @@ export class ThreePostProcess {
     du['u_coherence'].value = opts.coherence;
     du['u_resolution'].value.set(this.width, this.height);
 
-    // Update bloom — strength scales with bass and chaos
+    // Bloom params
     this.bloomPass.strength = 0.3 + chaos * 0.5 + opts.bass * 0.3;
-    this.bloomPass.radius = 0.4;
     this.bloomPass.threshold = 0.85 - chaos * 0.2;
 
-    // Multi-pass fractal feedback: render the composer multiple times
-    // Each iteration feeds back through u_prev
-    for (let i = 0; i < iterations; i++) {
-      cu['u_iteration'].value = i;
+    // ── Pass 1: Full render (scene + all effects) ──
+    this.composer.render();
 
-      // On iteration > 0, the savePass already wrote to prevTarget,
-      // so u_prev naturally contains the previous iteration's output
-      this.composer.render();
+    // Save the output to prevTarget for feedback
+    this.blitToPrev();
+
+    // ── Passes 2+: Feedback-only (no scene re-render) ──
+    for (let i = 1; i < iterations; i++) {
+      this.setEffectUniforms(this.feedbackCombinedPass, opts, i);
+
+      // The prevTarget already has the last frame's output from blitToPrev above.
+      // feedbackCombinedPass reads u_prev (= prevTarget.texture) and re-applies effects.
+      this.feedbackComposer.render();
+
+      // Save this iteration's output for the next iteration / next frame
+      this.blitToPrevFromComposer(this.feedbackComposer);
     }
   }
 
@@ -517,7 +508,55 @@ export class ThreePostProcess {
     this.width = width;
     this.height = height;
     this.composer.setSize(width, height);
+    this.feedbackComposer.setSize(width, height);
     this.prevTarget.setSize(width, height);
     this.bloomPass.resolution.set(width, height);
+  }
+
+  // Reusable quad for copying to prevTarget
+  private copyMaterial: THREE.ShaderMaterial | null = null;
+  private copyQuad: THREE.Mesh | null = null;
+  private copyScene: THREE.Scene | null = null;
+  private copyCamera: THREE.Camera | null = null;
+
+  /** Copy a composer's read buffer to prevTarget for feedback */
+  private blitToPrevFromComposer(comp: EffectComposer): void {
+    if (!this.copyMaterial) this.initCopyResources();
+    this.copyMaterial!.uniforms.tDiffuse.value = comp.readBuffer.texture;
+    this.renderer.setRenderTarget(this.prevTarget);
+    this.renderer.render(this.copyScene!, this.copyCamera!);
+    this.renderer.setRenderTarget(null);
+  }
+
+  private initCopyResources(): void {
+    this.copyMaterial = new THREE.ShaderMaterial({
+      uniforms: { tDiffuse: { value: null } },
+      vertexShader: CopyShader.vertexShader,
+      fragmentShader: CopyShader.fragmentShader,
+    });
+    this.copyQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.copyMaterial);
+    this.copyScene = new THREE.Scene();
+    this.copyScene.add(this.copyQuad);
+    this.copyCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  }
+
+  /** Copy the main composer's read buffer to prevTarget */
+  private blitToPrev(): void {
+    this.blitToPrevFromComposer(this.composer);
+  }
+
+  private setEffectUniforms(pass: ShaderPass, opts: {
+    time: number; bass: number; mid: number; high: number; beat: number; coherence: number;
+  }, iteration: number): void {
+    const u = pass.uniforms;
+    u['u_time'].value = opts.time;
+    u['u_bass'].value = opts.bass;
+    u['u_mid'].value = opts.mid;
+    u['u_high'].value = opts.high;
+    u['u_beat'].value = opts.beat;
+    u['u_coherence'].value = opts.coherence;
+    u['u_resolution'].value.set(this.width, this.height);
+    u['u_prev'].value = this.prevTarget.texture;
+    u['u_iteration'].value = iteration;
   }
 }

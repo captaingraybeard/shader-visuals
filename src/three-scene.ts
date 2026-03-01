@@ -297,8 +297,8 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
     fragmentShader: FRAG,
     uniforms: makeUniforms(),
     transparent: true,
-    depthWrite: false,
-    depthTest: false,
+    depthWrite: true,
+    depthTest: true,
     blending: THREE.NormalBlending,
   });
 
@@ -307,12 +307,9 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
   return { points, material, geometry };
 }
 
-/* ── Helper: Float32Array(16) → THREE.Matrix4 ── */
-function mat4FromArray(arr: Float32Array): THREE.Matrix4 {
-  const m = new THREE.Matrix4();
-  m.fromArray(arr);
-  return m;
-}
+/* ── Helper: reusable Matrix4 instances to avoid per-frame allocation ── */
+const _tmpProjection = new THREE.Matrix4();
+const _tmpView = new THREE.Matrix4();
 
 /* ── ThreeScene ──
  * Scene-graph-only: manages point cloud meshes and uniforms.
@@ -375,10 +372,12 @@ export class ThreeScene {
    */
   update(opts: RenderOpts): void {
     // Apply external camera matrices (from camera-auto.ts Float32Arrays)
-    this.camera.projectionMatrix.copy(mat4FromArray(opts.projection));
-    this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
-    this.camera.matrixWorldInverse.copy(mat4FromArray(opts.view));
-    this.camera.matrixWorld.copy(this.camera.matrixWorldInverse).invert();
+    _tmpProjection.fromArray(opts.projection);
+    _tmpView.fromArray(opts.view);
+    this.camera.projectionMatrix.copy(_tmpProjection);
+    this.camera.projectionMatrixInverse.copy(_tmpProjection).invert();
+    this.camera.matrixWorldInverse.copy(_tmpView);
+    this.camera.matrixWorld.copy(_tmpView).invert();
 
     // Crossfade progress
     let crossT = 1.0;
