@@ -6,6 +6,7 @@ import logging
 from PIL import Image
 
 from .imagegen import generate_image
+from .upscale import upscale_image
 from .extract import extract_scene_objects
 from .depth import estimate_depth
 from .segment import segment_image
@@ -35,30 +36,35 @@ async def run_pipeline(
     log.info(f"Image generated: {image.size} in {timings['image_gen_ms']}ms")
     log.info(f"Revised prompt: {revised_prompt[:200]}...")
 
-    # 2. Extract scene objects from actual image via GPT-4o-mini vision
+    # 2. Extract scene objects from ORIGINAL image via GPT-4o-mini vision
     t = time.time()
     dynamic_prompts = await extract_scene_objects(image, api_key, revised_prompt)
     timings["extract_ms"] = int((time.time() - t) * 1000)
 
-    # 3. Depth + Segmentation in parallel
-    loop = asyncio.get_event_loop()
-
+    # 3. Upscale 4x for denser point cloud
     t = time.time()
-    depth_future = loop.run_in_executor(None, estimate_depth, image)
-    seg_future = loop.run_in_executor(None, segment_image, image, dynamic_prompts or None)
+    loop = asyncio.get_event_loop()
+    hi_res = await loop.run_in_executor(None, upscale_image, image)
+    timings["upscale_ms"] = int((time.time() - t) * 1000)
+    log.info(f"Upscaled: {image.size} → {hi_res.size} in {timings['upscale_ms']}ms")
+
+    # 4. Depth + Segmentation in parallel (on upscaled image)
+    t = time.time()
+    depth_future = loop.run_in_executor(None, estimate_depth, hi_res)
+    seg_future = loop.run_in_executor(None, segment_image, hi_res, dynamic_prompts or None)
 
     depth, (segments, detected) = await asyncio.gather(depth_future, seg_future)
     timings["depth_ms"] = int((time.time() - t) * 1000)
     timings["segmentation_ms"] = timings["depth_ms"]  # ran in parallel
 
-    # 4. Build point cloud
+    # 5. Build point cloud (stride=5 on 4x image ≈ 1.17M points, fits RunPod 20MB limit)
     t = time.time()
     projection = "equirectangular" if mode == "panorama" else "planar"
-    packed_bytes, point_count = build_point_cloud(image, depth, segments, mode=mode, stride=2)
+    packed_bytes, point_count = build_point_cloud(hi_res, depth, segments, mode=mode, stride=5)
     timings["pointcloud_ms"] = int((time.time() - t) * 1000)
 
-    # 5. Save to storage
-    w, h = image.size
+    # 6. Save to storage (original image, not upscaled)
+    w, h = hi_res.size
     metadata = {
         "prompt": prompt,
         "revised_prompt": revised_prompt,

@@ -35,13 +35,19 @@ def load_all_models():
     from .segment import _load_sam3
     _load_sam3()
 
+    # Load Real-ESRGAN upscaler
+    from .upscale import _load_realesrgan
+    _load_realesrgan()
+
     log.info(f"All models loaded on {DEVICE}.")
 
 
 def get_loaded_models() -> dict:
     """Return status of loaded models."""
     from .segment import _sam3_model
+    from .upscale import _upscale_model
     return {
         "depth": "depth-anything/Depth-Anything-V2-Large-hf" if _depth_pipe else None,
         "segmentation": "facebook/sam3" if _sam3_model else None,
+        "upscale": "RealESRGAN-x4plus" if _upscale_model else None,
     }

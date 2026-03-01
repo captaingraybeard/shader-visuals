@@ -13,4 +13,6 @@ einops
 opencv-python-headless
 pycocotools
 decord
+realesrgan
+basicsr
 sam3 @ git+https://github.com/facebookresearch/sam3.git
