@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python deps (torch already in base image, will be upgraded to 2.7+)
 COPY server/requirements-runpod.txt requirements.txt
 
-# Install opencv first — basicsr's setup.py imports cv2 during metadata generation
-RUN pip install --no-cache-dir opencv-python-headless
+# Pre-install deps that basicsr/realesrgan setup.py imports during metadata generation
+RUN pip install --no-cache-dir opencv-python-headless facexlib gfpgan
 
 # Install realesrgan + basicsr. basicsr compiles CUDA extensions — use JIT mode
 # so they compile at runtime (when GPU is available) not at build time.
