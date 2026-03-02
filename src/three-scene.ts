@@ -13,8 +13,8 @@ precision highp float;
 // Three.js provides: projectionMatrix, modelViewMatrix, position (vec3)
 // But we use raw u_projection / u_view for camera-auto.ts compatibility.
 
-// Attributes (Three.js auto-binds 'position' but we use custom names via ShaderMaterial)
-in vec3 a_position;
+// Attributes — 'position' is auto-declared by Three.js for GLSL3
+// in vec3 position;  // auto-injected
 in vec3 a_color;
 in float a_segment;
 
@@ -64,15 +64,15 @@ void main() {
     pos = posData.xyz;
     recruitment = posData.w;
   } else {
-    pos = a_position;
+    pos = position;
   }
 
   float depthFactor;
   if (u_projMode > 0.5) {
-    float radius = length(a_position);
+    float radius = length(position);
     depthFactor = clamp((radius - 6.0) / 4.0, 0.0, 1.0);
   } else {
-    depthFactor = 1.0 - clamp((-a_position.z - 3.0) / 6.0, 0.0, 1.0);
+    depthFactor = 1.0 - clamp((-position.z - 3.0) / 6.0, 0.0, 1.0);
   }
 
   float h1 = hash(idx);
@@ -99,7 +99,7 @@ void main() {
 
   vec3 dir;
   if (u_projMode > 0.5) {
-    dir = normalize(a_position);
+    dir = normalize(position);
   } else {
     dir = vec3(0.0, 0.0, 1.0);
   }
@@ -196,7 +196,7 @@ void main() {
   ) * localChaos * 1.5 * invMass;
   pos += scatter;
 
-  float zDist = u_projMode > 0.5 ? length(a_position) : -a_position.z;
+  float zDist = u_projMode > 0.5 ? length(position) : -position.z;
   float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.08 * invMass * displaceScale;
   pos += dir * beatWave;
 
@@ -315,7 +315,7 @@ function makeUniforms(): Record<string, THREE.IUniform> {
 /* ── Helper: build a Points mesh from PointCloudData ── */
 function buildPoints(data: PointCloudData): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('a_position', new THREE.Float32BufferAttribute(data.positions, 3));
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
   geometry.setAttribute('a_color', new THREE.Float32BufferAttribute(data.colors, 3));
   geometry.setAttribute('a_segment', new THREE.Float32BufferAttribute(data.segments, 1));
 

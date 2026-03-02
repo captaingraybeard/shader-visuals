@@ -278,6 +278,7 @@ function parseServerResponse(buffer: ArrayBuffer, projection: ProjectionMode): S
 
 /**
  * Parse raw packed point cloud binary into PointCloudData.
+ * Supports both quantized (10 bytes/pt) and legacy (20 bytes/pt) formats.
  */
 function parsePackedPointCloud(
   buffer: ArrayBuffer,
@@ -285,7 +286,9 @@ function parsePackedPointCloud(
   projection: ProjectionMode,
 ): ServerResult {
   const pointCount = metadata.point_count as number;
-  const BYTES_PER_POINT = 20;
+  const formatInfo = metadata.format as { format?: string; bytes_per_point?: number; pos_min?: number[]; pos_max?: number[] } | undefined;
+  const isQuantized = formatInfo?.format === 'quantized';
+  const BYTES_PER_POINT = isQuantized ? 10 : 20;
 
   const positions = new Float32Array(pointCount * 3);
   const colors = new Float32Array(pointCount * 3);
@@ -293,19 +296,45 @@ function parsePackedPointCloud(
 
   const data = new DataView(buffer);
 
-  for (let i = 0; i < pointCount; i++) {
-    const off = i * BYTES_PER_POINT;
+  if (isQuantized) {
+    // Quantized: int16[3] + uint8[3] + uint8 = 10 bytes
+    const posMin = formatInfo!.pos_min!;
+    const posMax = formatInfo!.pos_max!;
+    const posRange = [posMax[0] - posMin[0], posMax[1] - posMin[1], posMax[2] - posMin[2]];
 
-    positions[i * 3] = data.getFloat32(off, true);
-    positions[i * 3 + 1] = data.getFloat32(off + 4, true);
-    positions[i * 3 + 2] = data.getFloat32(off + 8, true);
+    for (let i = 0; i < pointCount; i++) {
+      const off = i * 10;
 
-    colors[i * 3] = data.getUint8(off + 12) / 255;
-    colors[i * 3 + 1] = data.getUint8(off + 13) / 255;
-    colors[i * 3 + 2] = data.getUint8(off + 14) / 255;
+      // Dequantize: int16 [-32767, 32767] → [0, 1] → original range
+      for (let j = 0; j < 3; j++) {
+        const q = data.getInt16(off + j * 2, true);
+        const normalized = (q + 32767) / 65534;
+        positions[i * 3 + j] = posMin[j] + normalized * posRange[j];
+      }
 
-    const catId = data.getUint8(off + 15);
-    segments[i] = CATEGORY_COUNT > 1 ? catId / (CATEGORY_COUNT - 1) : 0;
+      colors[i * 3] = data.getUint8(off + 6) / 255;
+      colors[i * 3 + 1] = data.getUint8(off + 7) / 255;
+      colors[i * 3 + 2] = data.getUint8(off + 8) / 255;
+
+      const catId = data.getUint8(off + 9);
+      segments[i] = CATEGORY_COUNT > 1 ? catId / (CATEGORY_COUNT - 1) : 0;
+    }
+  } else {
+    // Legacy: float32[3] + uint8[3] + uint8 + pad[4] = 20 bytes
+    for (let i = 0; i < pointCount; i++) {
+      const off = i * 20;
+
+      positions[i * 3] = data.getFloat32(off, true);
+      positions[i * 3 + 1] = data.getFloat32(off + 4, true);
+      positions[i * 3 + 2] = data.getFloat32(off + 8, true);
+
+      colors[i * 3] = data.getUint8(off + 12) / 255;
+      colors[i * 3 + 1] = data.getUint8(off + 13) / 255;
+      colors[i * 3 + 2] = data.getUint8(off + 14) / 255;
+
+      const catId = data.getUint8(off + 15);
+      segments[i] = CATEGORY_COUNT > 1 ? catId / (CATEGORY_COUNT - 1) : 0;
+    }
   }
 
   const labels = (metadata.segments_detected as string[]) || [];

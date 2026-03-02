@@ -75,6 +75,9 @@ export class App {
     const savedForm = localStorage.getItem('shader-visuals-form');
     if (savedForm !== null) this.form = parseFloat(savedForm);
 
+    // Debug overlay (visible on-screen for remote debugging)
+    this.initDebugOverlay();
+
     // Start render loop
     this.startTime = performance.now() / 1000;
     this.lastFrameTime = this.startTime;
@@ -299,6 +302,7 @@ export class App {
     }
 
     this.renderScene(time, dt, audioData);
+    this.updateDebug(audioData);
 
     requestAnimationFrame(this.loop);
   };
@@ -364,6 +368,65 @@ export class App {
       beat: audioData.u_beat,
       coherence: effectiveCoherence,
     });
+  }
+
+  // ── Debug overlay ──────────────────────────────────
+  private debugEl: HTMLDivElement | null = null;
+  private frameCount = 0;
+
+  private debugVisible = false;
+
+  private initDebugOverlay(): void {
+    const el = document.createElement('div');
+    el.id = 'debug-overlay';
+    el.style.cssText = 'position:fixed;top:8px;left:8px;z-index:9999;color:#0f0;font:11px/1.4 monospace;background:rgba(0,0,0,0.7);padding:6px 10px;border-radius:4px;pointer-events:none;max-width:90vw;white-space:pre-wrap;display:none;';
+    document.body.appendChild(el);
+    this.debugEl = el;
+
+    // Triple-tap to toggle debug overlay
+    let tapCount = 0;
+    let lastTap = 0;
+    document.addEventListener('click', () => {
+      const now = Date.now();
+      if (now - lastTap < 400) {
+        tapCount++;
+        if (tapCount >= 2) {
+          this.debugVisible = !this.debugVisible;
+          el.style.display = this.debugVisible ? 'block' : 'none';
+          tapCount = 0;
+        }
+      } else {
+        tapCount = 0;
+      }
+      lastTap = now;
+    });
+  }
+
+  private updateDebug(audioData: AudioData): void {
+    this.frameCount++;
+    if (!this.debugEl || !this.debugVisible || this.frameCount % 30 !== 0) return;
+    const gl = this.threeScene.renderer.getContext();
+    const info = this.threeScene.renderer.info;
+    const lines = [
+      `frame: ${this.frameCount}`,
+      `hasCloud: ${this.threeScene.hasCloud}`,
+      `scene children: ${this.threeScene.scene.children.length}`,
+      `gl: ${gl ? 'ok' : 'MISSING'}`,
+      `draw calls: ${info.render.calls}`,
+      `points: ${info.render.points}`,
+      `triangles: ${info.render.triangles}`,
+      `programs: ${info.programs?.length ?? '?'}`,
+      `bass: ${audioData.u_bass.toFixed(2)} mid: ${audioData.u_mid.toFixed(2)}`,
+      `coherence: ${this.coherence.toFixed(2)}`,
+      `panorama: ${this.panoramaMode}`,
+      `hasScene: ${this.hasScene}`,
+    ];
+    // Check GL errors
+    if (gl) {
+      const err = gl.getError();
+      if (err !== gl.NO_ERROR) lines.push(`GL ERROR: ${err}`);
+    }
+    this.debugEl.textContent = lines.join('\n');
   }
 
   private async registerSW(): Promise<void> {

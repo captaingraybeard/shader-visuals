@@ -57,10 +57,12 @@ async def run_pipeline(
     timings["depth_ms"] = int((time.time() - t) * 1000)
     timings["segmentation_ms"] = timings["depth_ms"]  # ran in parallel
 
-    # 5. Build point cloud (stride=5 on 4x image ≈ 1.17M points, fits RunPod 20MB limit)
+    # 5. Build point cloud (quantized int16 = 10 bytes/pt; stride=3 → ~3.26M pts, ~11MB compressed)
     t = time.time()
     projection = "equirectangular" if mode == "panorama" else "planar"
-    packed_bytes, point_count = build_point_cloud(hi_res, depth, segments, mode=mode, stride=5)
+    packed_bytes, point_count, format_info = build_point_cloud(
+        hi_res, depth, segments, mode=mode, stride=3, quantize=True,
+    )
     timings["pointcloud_ms"] = int((time.time() - t) * 1000)
 
     # 6. Save to storage (original image, not upscaled)
@@ -74,6 +76,7 @@ async def run_pipeline(
         "height": h,
         "point_count": point_count,
         "projection": projection,
+        "format": format_info,
         "extracted_keywords": dynamic_prompts,
         "segments_detected": [
             f"{d['label']}→cat{d['category']}({d['coverage_pct']}%)"
