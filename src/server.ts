@@ -99,7 +99,7 @@ async function generateViaRunPod(
 
   if (startData.status === 'COMPLETED') {
     // Instant completion (unlikely but possible)
-    return await processRunPodOutput(startData.output, mode);
+    return await processRunPodOutput(startData.output, mode, onStatus);
   }
 
   // Poll for completion
@@ -122,7 +122,7 @@ async function generateViaRunPod(
 
     if (pollData.status === 'COMPLETED') {
       onStatus?.('Receiving point cloud...');
-      return await processRunPodOutput(pollData.output, mode);
+      return await processRunPodOutput(pollData.output, mode, onStatus);
     }
 
     if (pollData.status === 'FAILED') {
@@ -165,18 +165,36 @@ async function decompressZlib(data: Uint8Array): Promise<ArrayBuffer> {
 async function processRunPodOutput(
   output: unknown,
   mode: string,
+  onStatus?: (msg: string) => void,
 ): Promise<ServerResult> {
   const obj = output as {
     pointcloud_b64?: string;
+    pointcloud_url?: string;
     compressed?: boolean;
     error?: string;
     metadata?: Record<string, unknown>;
   };
 
   if (obj.error) throw new Error(`Pipeline error: ${obj.error}`);
-  if (!obj.pointcloud_b64) throw new Error('No point cloud in response');
 
   const metadata = obj.metadata || {};
+  const projection: ProjectionMode = mode === 'panorama' ? 'equirectangular' : 'planar';
+
+  // URL mode: fetch point cloud from R2/external storage
+  if (obj.pointcloud_url) {
+    onStatus?.('Downloading point cloud from CDN...');
+    console.log(`Fetching point cloud from: ${obj.pointcloud_url}`);
+    const resp = await fetch(obj.pointcloud_url);
+    if (!resp.ok) throw new Error(`Failed to fetch point cloud: ${resp.status}`);
+    const raw = new Uint8Array(await resp.arrayBuffer());
+    const buffer = obj.compressed ? await decompressZlib(raw) : raw.buffer;
+    const sizeMB = (raw.length / (1024 * 1024)).toFixed(1);
+    console.log(`Downloaded ${sizeMB}MB point cloud (${metadata.point_count} points)`);
+    return parsePackedPointCloud(buffer, metadata, projection);
+  }
+
+  // Inline base64 mode (fallback when R2 not configured)
+  if (!obj.pointcloud_b64) throw new Error('No point cloud in response');
 
   console.log(`RunPod response: ${obj.pointcloud_b64.length} b64 chars, metadata keys: ${Object.keys(metadata).join(', ')}`);
 
@@ -190,7 +208,6 @@ async function processRunPodOutput(
   // Decompress if server sent zlib-compressed data
   const buffer = obj.compressed ? await decompressZlib(raw) : raw.buffer;
 
-  const projection: ProjectionMode = mode === 'panorama' ? 'equirectangular' : 'planar';
   return parsePackedPointCloud(buffer, metadata, projection);
 }
 

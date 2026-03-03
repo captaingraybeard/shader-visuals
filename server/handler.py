@@ -62,6 +62,17 @@ async def handler(job):
         log.exception("Pipeline error")
         return {"error": str(e)}
 
+    # If R2 upload happened, result_bytes is None — return URL only
+    if result_bytes is None:
+        url = metadata.get("pointcloud_url", "")
+        log.info(f"Response: R2 URL mode → {url}")
+        return {
+            "metadata": metadata,
+            "pointcloud_url": url,
+            "compressed": True,
+        }
+
+    # Fallback: inline base64 (no R2)
     compressed = zlib.compress(result_bytes, level=6)
     b64_data = base64.b64encode(compressed).decode("ascii")
     log.info(f"Response: {len(result_bytes)} raw → {len(compressed)} compressed → {len(b64_data)} b64")
