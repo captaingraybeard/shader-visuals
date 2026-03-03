@@ -2,9 +2,20 @@
 
 import sys
 import os
+import types
 
 # Add parent dir to path so `server` package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Pre-patch basicsr's deformable conv to skip JIT CUDA compilation.
+# We only use RRDBNet (for Real-ESRGAN) which doesn't need DCN ops.
+# This avoids the ninja build dependency entirely.
+_dcn_dummy = types.ModuleType("basicsr.ops.dcn")
+_dcn_dummy.ModulatedDeformConvPack = None
+_dcn_dummy.modulated_deform_conv = None
+_deform_dummy = types.ModuleType("basicsr.ops.dcn.deform_conv")
+sys.modules["basicsr.ops.dcn"] = _dcn_dummy
+sys.modules["basicsr.ops.dcn.deform_conv"] = _deform_dummy
 
 import runpod
 import base64
