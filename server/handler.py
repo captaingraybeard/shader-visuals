@@ -7,15 +7,24 @@ import types
 # Add parent dir to path so `server` package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Pre-patch basicsr's deformable conv to skip JIT CUDA compilation.
-# We only use RRDBNet (for Real-ESRGAN) which doesn't need DCN ops.
-# This avoids the ninja build dependency entirely.
+# Pre-patch basicsr to avoid import crashes. We only use RRDBNet.
+# 1) Stub deformable conv (needs ninja for JIT CUDA compilation)
 _dcn_dummy = types.ModuleType("basicsr.ops.dcn")
 _dcn_dummy.ModulatedDeformConvPack = None
 _dcn_dummy.modulated_deform_conv = None
 _deform_dummy = types.ModuleType("basicsr.ops.dcn.deform_conv")
 sys.modules["basicsr.ops.dcn"] = _dcn_dummy
 sys.modules["basicsr.ops.dcn.deform_conv"] = _deform_dummy
+
+# 2) Stub torchvision.transforms.functional_tensor (removed in newer torchvision)
+#    basicsr.data.degradations imports rgb_to_grayscale from it
+try:
+    import torchvision.transforms.functional_tensor
+except ModuleNotFoundError:
+    from torchvision.transforms import functional as _tvf
+    _ft_dummy = types.ModuleType("torchvision.transforms.functional_tensor")
+    _ft_dummy.rgb_to_grayscale = getattr(_tvf, "rgb_to_grayscale", lambda x, nc=1: x)
+    sys.modules["torchvision.transforms.functional_tensor"] = _ft_dummy
 
 import runpod
 import base64
