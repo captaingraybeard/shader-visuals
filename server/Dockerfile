@@ -6,7 +6,7 @@ WORKDIR /app
 
 # System deps for pycocotools (cython) and decord (ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake libavcodec-dev libavfilter-dev libavformat-dev \
+    build-essential cmake ninja-build libavcodec-dev libavfilter-dev libavformat-dev \
     libavutil-dev libswscale-dev ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY server/requirements-runpod.txt requirements.txt
 
 # Pre-install deps that basicsr/realesrgan setup.py imports during metadata generation
-RUN pip install --no-cache-dir opencv-python-headless facexlib gfpgan
+RUN pip install --no-cache-dir opencv-python-headless facexlib gfpgan ninja
 
 # Install realesrgan + basicsr. basicsr compiles CUDA extensions — use JIT mode
 # so they compile at runtime (when GPU is available) not at build time.
