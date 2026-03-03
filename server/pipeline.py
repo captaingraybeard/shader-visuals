@@ -59,10 +59,10 @@ async def run_pipeline(
     timings["segmentation_ms"] = timings["depth_ms"]  # ran in parallel
 
     # 5. Build point cloud (quantized int16 = 10 bytes/pt)
-    # R2 configured → stride=1 (full res, ~29M pts), uploaded externally
+    # R2 configured → stride=2 (~7.3M pts), uploaded externally
     # No R2 → stride=3 (~3.26M pts, fits RunPod 20MB limit)
     use_r2 = is_r2_configured()
-    stride = 1 if use_r2 else 3
+    stride = 2 if use_r2 else 3
     t = time.time()
     projection = "equirectangular" if mode == "panorama" else "planar"
     packed_bytes, point_count, format_info = build_point_cloud(
