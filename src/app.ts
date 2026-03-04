@@ -318,6 +318,19 @@ export class App {
 
     const effectiveCoherence = this.coherence;
 
+    // Per-segment coherence: audio energy disrupts each segment's coherence
+    const sensitivity = 2.0; // how much audio disrupts coherence
+    const base = this.coherence;
+    const bandEnergies = [
+      audioData.u_band0 * 0.6 + audioData.u_band1 * 0.4,                              // cat 0: BASS_SUBJECT
+      audioData.u_band2 * 0.3 + audioData.u_band3 * 0.5 + audioData.u_band4 * 0.2,    // cat 1: MID_ORGANIC
+      audioData.u_band5 * 0.2 + audioData.u_band6 * 0.4 + audioData.u_band7 * 0.4,    // cat 2: HIGH_SKY
+      audioData.u_beat * 0.7 + audioData.u_band0 * 0.3,                                // cat 3: BEAT_GROUND
+      audioData.u_band3 * 0.3 + audioData.u_band4 * 0.4 + audioData.u_band5 * 0.3,    // cat 4: MID_STRUCTURE
+      audioData.u_band1 * 0.3 + audioData.u_band2 * 0.4 + audioData.u_band3 * 0.3,    // cat 5: LOW_AMBIENT
+    ];
+    const segCoherence = bandEnergies.map(e => Math.max(0, Math.min(1, base - e * sensitivity)));
+
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
     const projection = this.camera.getProjectionMatrix(aspect);
@@ -352,6 +365,7 @@ export class App {
         band6: audioData.u_band6,
         band7: audioData.u_band7,
         coherence: effectiveCoherence,
+        segCoherence,
         pointScale,
         form: this.form,
         highlightCat: this.highlightCat,

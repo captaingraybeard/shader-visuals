@@ -32,6 +32,7 @@ uniform float u_band5;
 uniform float u_band6;
 uniform float u_band7;
 uniform float u_coherence;
+uniform float u_segCoherence[6];
 uniform float u_pointScale;
 uniform float u_transition;
 uniform float u_form;
@@ -152,7 +153,9 @@ void main() {
     sizeBoost = energy * 0.5;
   }
 
-  float displaceScale = mix(1.0, 0.05, u_coherence);
+  // Per-segment coherence lookup
+  float segCoh = u_segCoherence[cat];
+  float displaceScale = mix(1.0, 0.05, segCoh);
 
   float chladni = sin(pos.x * 6.0 + t * 0.5) * sin(pos.y * 6.0 + t * 0.3);
   displacement *= mix(1.0, chladni, 0.4);
@@ -185,7 +188,7 @@ void main() {
   );
 
   float depthProtection = depthFactor * 0.4;
-  float localCoherence = clamp(u_coherence + depthProtection * (1.0 - u_coherence), 0.0, 1.0);
+  float localCoherence = clamp(segCoh + depthProtection * (1.0 - segCoh), 0.0, 1.0);
   float localChaos = 1.0 - localCoherence;
 
   float chaosFreq = 2.0 + energy * 3.0;
@@ -204,13 +207,13 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos, 1.0);
 
   float baseSize = u_pointScale;
-  float coherenceBoost = localCoherence * localCoherence * 6.0;
+  float coherenceBoost = localCoherence * localCoherence * 2.0;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
-  v_color = a_color * 1.4 + vec3(0.08);
+  v_color = a_color * 1.1;
   v_color += colorTint;
   v_color += vec3(0.08, 0.04, 0.1) * u_beat;
 
@@ -278,6 +281,7 @@ export interface RenderOpts {
   band6: number;
   band7: number;
   coherence: number;
+  segCoherence: number[];
   pointScale: number;
   form: number;
   highlightCat: number;
@@ -301,6 +305,7 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_band6: { value: 0 },
     u_band7: { value: 0 },
     u_coherence: { value: 0 },
+    u_segCoherence: { value: [0, 0, 0, 0, 0, 0] },
     u_pointScale: { value: 1 },
     u_transition: { value: 1 },
     u_form: { value: 0 },
@@ -512,6 +517,7 @@ export class ThreeScene {
     u.u_band6.value = opts.band6;
     u.u_band7.value = opts.band7;
     u.u_coherence.value = opts.coherence;
+    u.u_segCoherence.value = opts.segCoherence;
     u.u_pointScale.value = opts.pointScale;
     u.u_transition.value = transition;
     u.u_form.value = opts.form;

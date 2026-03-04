@@ -482,8 +482,8 @@ export class ThreePostProcess {
     du['u_resolution'].value.set(this.width, this.height);
 
     // Bloom params
-    this.bloomPass.strength = 0.3 + chaos * 0.5 + opts.bass * 0.3;
-    this.bloomPass.threshold = 0.85 - chaos * 0.2;
+    this.bloomPass.strength = 0.2 + chaos * 0.4 + opts.bass * 0.2;
+    this.bloomPass.threshold = 0.9 - chaos * 0.2;
 
     // ── Pass 1: Full render (scene + all effects) ──
     this.composer.render();
