@@ -23,6 +23,8 @@ const CombinedShader = {
     u_coherence: { value: 1 },
     u_resolution: { value: new THREE.Vector2(1, 1) },
     u_iteration: { value: 0 },
+    u_demonTotal: { value: 0 },
+    u_chakraTotal: { value: 0 },
   },
 
   vertexShader: /* glsl */ `
@@ -48,6 +50,8 @@ const CombinedShader = {
     uniform float u_coherence;
     uniform vec2 u_resolution;
     uniform int u_iteration;
+    uniform float u_demonTotal;
+    uniform float u_chakraTotal;
 
     vec3 hsv2rgb(vec3 c) {
       vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
@@ -93,7 +97,7 @@ const CombinedShader = {
       }
 
       // 3. Fractal feedback / infinite regression
-      float trailAmount = smoothstep(0.8, 0.3, u_coherence) * 0.7;
+      float trailAmount = smoothstep(0.8, 0.3, u_coherence) * 0.7 * (1.0 - u_chakraTotal * 0.5);
       if (trailAmount > 0.01) {
         float warp = chaos;
 
@@ -210,6 +214,8 @@ const DMTShader = {
     u_beat: { value: 0 },
     u_coherence: { value: 1 },
     u_resolution: { value: new THREE.Vector2(1, 1) },
+    u_demonTotal: { value: 0 },
+    u_chakraTotal: { value: 0 },
   },
 
   vertexShader: /* glsl */ `
@@ -233,6 +239,8 @@ const DMTShader = {
     uniform float u_beat;
     uniform float u_coherence;
     uniform vec2 u_resolution;
+    uniform float u_demonTotal;
+    uniform float u_chakraTotal;
 
     const float PI = 3.14159265;
     const float TAU = 6.28318530;
@@ -301,7 +309,7 @@ const DMTShader = {
       float chaos = 1.0 - u_coherence;
       float t = u_time;
 
-      float activation = smoothstep(0.5, 0.15, u_coherence);
+      float activation = max(smoothstep(0.5, 0.15, u_coherence), u_demonTotal * 0.8);
       if (activation < 0.01) {
         gl_FragColor = sceneCol;
         return;
@@ -464,6 +472,8 @@ export class ThreePostProcess {
     high: number;
     beat: number;
     coherence: number;
+    demonTotal?: number;
+    chakraTotal?: number;
   }): void {
     const chaos = 1.0 - opts.coherence;
     const iterations = Math.max(1, Math.min(3, Math.round(1 + chaos * 2)));
@@ -480,9 +490,12 @@ export class ThreePostProcess {
     du['u_beat'].value = opts.beat;
     du['u_coherence'].value = opts.coherence;
     du['u_resolution'].value.set(this.width, this.height);
+    du['u_demonTotal'].value = opts.demonTotal ?? 0;
+    du['u_chakraTotal'].value = opts.chakraTotal ?? 0;
 
-    // Bloom params
-    this.bloomPass.strength = 0.2 + chaos * 0.4 + opts.bass * 0.2;
+    // Bloom params — demons drive bloom more than chaos
+    const demonTotal = (opts as any).demonTotal ?? 0;
+    this.bloomPass.strength = 0.2 + chaos * 0.3 + demonTotal * 0.5 + opts.bass * 0.15;
     this.bloomPass.threshold = 0.9 - chaos * 0.2;
 
     // ── Pass 1: Full render (scene + all effects) ──
@@ -547,6 +560,7 @@ export class ThreePostProcess {
 
   private setEffectUniforms(pass: ShaderPass, opts: {
     time: number; bass: number; mid: number; high: number; beat: number; coherence: number;
+    demonTotal?: number; chakraTotal?: number;
   }, iteration: number): void {
     const u = pass.uniforms;
     u['u_time'].value = opts.time;
@@ -558,5 +572,7 @@ export class ThreePostProcess {
     u['u_resolution'].value.set(this.width, this.height);
     u['u_prev'].value = this.prevTarget.texture;
     u['u_iteration'].value = iteration;
+    if (u['u_demonTotal']) u['u_demonTotal'].value = opts.demonTotal ?? 0;
+    if (u['u_chakraTotal']) u['u_chakraTotal'].value = opts.chakraTotal ?? 0;
   }
 }

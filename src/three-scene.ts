@@ -39,6 +39,11 @@ uniform float u_form;
 uniform float u_highlightCat;
 uniform float u_projMode;
 
+// Chakra system uniforms
+uniform float u_chakra[7];     // root, sacral, solar, heart, throat, thirdEye, crown
+uniform float u_demonsLow;     // sub-bass demon energy
+uniform float u_demonsHigh;    // high-freq demon energy
+
 // Creature system uniforms
 uniform sampler2D u_positionTex;
 uniform vec2 u_texSize;
@@ -153,9 +158,70 @@ void main() {
     sizeBoost = energy * 0.5;
   }
 
-  // Per-segment coherence lookup
-  float segCoh = u_segCoherence[cat];
+  // ── Chakra system ──
+  // Map segment category to patron chakra: cat0→3(heart), cat1→1(sacral), cat2→5(thirdEye), cat3→0(root), cat4→2(solar), cat5→4(throat)
+  int chakraMap[6] = int[6](3, 1, 5, 0, 2, 4);
+  int myChakra = chakraMap[cat];
+  float myChakraEnergy = u_chakra[myChakra];
+  float crownBoost = u_chakra[6] * 0.3;
+  float demonForce = u_demonsLow + u_demonsHigh;
+
+  // Per-segment coherence with chakra influence
+  float segCoh = clamp(
+    u_segCoherence[cat]
+    + myChakraEnergy * 0.5
+    + crownBoost
+    - demonForce * 0.3
+  , 0.0, 1.0);
   float displaceScale = mix(1.0, 0.05, segCoh);
+
+  // ── Per-segment chakra healing displacement ──
+  vec3 chakraHealDisp = vec3(0.0);
+  if (cat == 3) {
+    // Root chakra: grid snap + downward gravity
+    vec3 gridPos = round(pos * 4.0) / 4.0;
+    vec3 rootHeal = mix(pos, gridPos, myChakraEnergy * 0.3) - pos;
+    rootHeal.y -= myChakraEnergy * 0.1;
+    chakraHealDisp = rootHeal;
+  } else if (cat == 1) {
+    // Sacral chakra: smooth flowing waves
+    float sacralWave = sin(pos.x * 2.0 + pos.y * 1.5 + u_time * 1.0) * myChakraEnergy * 0.15;
+    chakraHealDisp = vec3(sacralWave, sacralWave * 0.5, 0.0);
+  } else if (cat == 4) {
+    // Solar Plexus: crystalline geometric alignment
+    float solarAngle = floor(atan(pos.y, pos.x) * 3.0 / 3.14159) * 3.14159 / 3.0;
+    vec3 solarDir = vec3(cos(solarAngle), sin(solarAngle), 0.0);
+    chakraHealDisp = solarDir * myChakraEnergy * 0.1;
+  } else if (cat == 0) {
+    // Heart chakra: gentle breathing pulse, attract inward
+    float heartBreath = sin(u_time * 0.8) * 0.5 + 0.5;
+    vec3 heartCenter = vec3(0.0, 0.0, -6.0);
+    vec3 toCenter = normalize(heartCenter - pos);
+    chakraHealDisp = toCenter * myChakraEnergy * heartBreath * 0.1;
+  } else if (cat == 5) {
+    // Throat chakra: rippling expansion
+    float throatRipple = sin(length(pos.xz) * 6.0 + u_time * 3.0) * myChakraEnergy * 0.08;
+    chakraHealDisp = vec3(0.0, throatRipple, 0.0);
+  } else if (cat == 2) {
+    // Third Eye: spiral ordering
+    float teAngle = atan(pos.y - 1.0, pos.x) + myChakraEnergy * u_time * 0.2;
+    float teRadius = length(vec2(pos.x, pos.y - 1.0));
+    chakraHealDisp = vec3(cos(teAngle) * teRadius - pos.x, sin(teAngle) * teRadius - (pos.y - 1.0), 0.0) * myChakraEnergy * 0.1;
+  }
+
+  // ── Demon displacement (resisted by chakra energy) ──
+  float demonResistance = myChakraEnergy * 0.6 + crownBoost;
+  float effectiveDemon = max(0.0, 1.0 - demonResistance);
+
+  vec3 demonLowDisp = vec3(
+    sin(pos.y * 8.0 + u_time * 15.0),
+    sin(pos.x * 6.0 + u_time * 12.0),
+    sin(pos.z * 7.0 + u_time * 10.0)
+  ) * u_demonsLow * effectiveDemon * 0.3;
+
+  vec3 demonHighDisp = vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * u_demonsHigh * effectiveDemon * 0.5;
+
+  pos += chakraHealDisp + demonLowDisp + demonHighDisp;
 
   float chladni = sin(pos.x * 6.0 + t * 0.5) * sin(pos.y * 6.0 + t * 0.3);
   displacement *= mix(1.0, chladni, 0.4);
@@ -216,6 +282,19 @@ void main() {
   v_color = a_color * 1.1;
   v_color += colorTint;
   v_color += vec3(0.08, 0.04, 0.1) * u_beat;
+
+  // ── Chakra color tinting ──
+  vec3 chakraColors[7] = vec3[7](
+    vec3(0.8, 0.1, 0.1),  // Root - red
+    vec3(0.9, 0.5, 0.1),  // Sacral - orange
+    vec3(0.9, 0.9, 0.2),  // Solar - yellow
+    vec3(0.2, 0.8, 0.3),  // Heart - green
+    vec3(0.2, 0.4, 0.9),  // Throat - blue
+    vec3(0.5, 0.2, 0.8),  // Third Eye - indigo
+    vec3(0.9, 0.9, 1.0)   // Crown - white/gold
+  );
+  v_color += chakraColors[myChakra] * myChakraEnergy * 0.15;
+  v_color += vec3(0.1, 0.08, 0.05) * u_chakra[6]; // Crown shimmer on all
 
   if (u_highlightCat > -0.5) {
     float catF = float(cat);
@@ -286,6 +365,9 @@ export interface RenderOpts {
   form: number;
   highlightCat: number;
   projMode: number;
+  chakra: number[];
+  demonsLow: number;
+  demonsHigh: number;
 }
 
 /* ── Helper: create uniforms object ── */
@@ -311,6 +393,9 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_form: { value: 0 },
     u_highlightCat: { value: -1 },
     u_projMode: { value: 0 },
+    u_chakra: { value: [0, 0, 0, 0, 0, 0, 0] },
+    u_demonsLow: { value: 0 },
+    u_demonsHigh: { value: 0 },
     u_positionTex: { value: _dummyTexture },
     u_texSize: { value: new THREE.Vector2(1, 1) },
     u_creaturesActive: { value: 0 },
@@ -523,6 +608,9 @@ export class ThreeScene {
     u.u_form.value = opts.form;
     u.u_highlightCat.value = opts.highlightCat;
     u.u_projMode.value = opts.projMode;
+    u.u_chakra.value = opts.chakra;
+    u.u_demonsLow.value = opts.demonsLow;
+    u.u_demonsHigh.value = opts.demonsHigh;
   }
 
   private disposePrev(): void {

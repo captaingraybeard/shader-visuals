@@ -251,6 +251,23 @@ export interface AudioData {
   u_mid: number;   // max(band2, band3, band4)
   u_high: number;  // max(band5, band6, band7)
   u_beat: number;
+
+  // Chakra energies (narrow FFT bins around each chakra frequency)
+  chakraRoot: number;      // 256 Hz
+  chakraSacral: number;    // 288 Hz
+  chakraSolar: number;     // 320 Hz
+  chakraHeart: number;     // 341 Hz
+  chakraThroat: number;    // 384 Hz
+  chakraThirdEye: number;  // 426 Hz
+  chakraCrown: number;     // 480 Hz
+
+  // Demon energies (everything outside chakra range)
+  demonsLow: number;       // 20-250 Hz sum
+  demonsHigh: number;      // 500-16000 Hz sum
+
+  // Total chakra vs demon energy
+  chakraTotal: number;     // sum of all 7 chakra energies
+  demonTotal: number;      // demonsLow + demonsHigh
 }
 
 // Band frequency boundaries in Hz
@@ -560,6 +577,9 @@ export class AudioEngine {
       u_band0: 0, u_band1: 0, u_band2: 0, u_band3: 0,
       u_band4: 0, u_band5: 0, u_band6: 0, u_band7: 0,
       u_bass: 0, u_mid: 0, u_high: 0, u_beat: 0,
+      chakraRoot: 0, chakraSacral: 0, chakraSolar: 0, chakraHeart: 0,
+      chakraThroat: 0, chakraThirdEye: 0, chakraCrown: 0,
+      demonsLow: 0, demonsHigh: 0, chakraTotal: 0, demonTotal: 0,
     };
     if (!this.active || !this.analyser || !this.ctx) return zero;
 
@@ -603,6 +623,43 @@ export class AudioEngine {
     const u_mid = clamp(Math.max(this.smoothBands[2], this.smoothBands[3], this.smoothBands[4]));
     const u_high = clamp(Math.max(this.smoothBands[5], this.smoothBands[6], this.smoothBands[7]));
 
+    // ── Chakra frequency extraction ──
+    // fftSize=2048 at 44100Hz → binSize = sampleRate / fftSize ≈ 21.53Hz
+    const fftSize = this.analyser.fftSize;
+    const binHz = sampleRate / fftSize;
+    const chakraFreqs = [256, 288, 320, 341, 384, 426, 480];
+    const chakraValues: number[] = [];
+    for (const freq of chakraFreqs) {
+      const centerBin = Math.round(freq / binHz);
+      // Average 3 bins centered on target
+      let sum = 0;
+      let count = 0;
+      for (let b = centerBin - 1; b <= centerBin + 1; b++) {
+        if (b >= 0 && b < binCount) {
+          sum += this.freqData[b] / 255;
+          count++;
+        }
+      }
+      chakraValues.push(count > 0 ? clamp(sum / count) : 0);
+    }
+
+    // Demon energies: sub-bass 20-250Hz, highs 500-16000Hz
+    const demonLowStart = Math.floor(20 / binHz);
+    const demonLowEnd = Math.min(Math.floor(250 / binHz), binCount - 1);
+    const demonHighStart = Math.floor(500 / binHz);
+    const demonHighEnd = Math.min(Math.floor(16000 / binHz), binCount - 1);
+
+    let demonsLowSum = 0;
+    for (let i = demonLowStart; i <= demonLowEnd; i++) demonsLowSum += this.freqData[i] / 255;
+    const demonsLow = clamp(demonLowEnd > demonLowStart ? demonsLowSum / (demonLowEnd - demonLowStart + 1) : 0);
+
+    let demonsHighSum = 0;
+    for (let i = demonHighStart; i <= demonHighEnd; i++) demonsHighSum += this.freqData[i] / 255;
+    const demonsHigh = clamp(demonHighEnd > demonHighStart ? demonsHighSum / (demonHighEnd - demonHighStart + 1) : 0);
+
+    const chakraTotal = clamp(chakraValues.reduce((a, b) => a + b, 0) / 7);
+    const demonTotal = clamp((demonsLow + demonsHigh) / 2);
+
     return {
       u_band0: clamp(this.smoothBands[0]),
       u_band1: clamp(this.smoothBands[1]),
@@ -616,6 +673,17 @@ export class AudioEngine {
       u_mid,
       u_high,
       u_beat: clamp(this.beat),
+      chakraRoot: chakraValues[0],
+      chakraSacral: chakraValues[1],
+      chakraSolar: chakraValues[2],
+      chakraHeart: chakraValues[3],
+      chakraThroat: chakraValues[4],
+      chakraThirdEye: chakraValues[5],
+      chakraCrown: chakraValues[6],
+      demonsLow,
+      demonsHigh,
+      chakraTotal,
+      demonTotal,
     };
   }
 }

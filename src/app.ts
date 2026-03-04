@@ -370,6 +370,13 @@ export class App {
         form: this.form,
         highlightCat: this.highlightCat,
         projMode: this.panoramaMode ? 1 : 0,
+        chakra: [
+          audioData.chakraRoot, audioData.chakraSacral, audioData.chakraSolar,
+          audioData.chakraHeart, audioData.chakraThroat, audioData.chakraThirdEye,
+          audioData.chakraCrown,
+        ],
+        demonsLow: audioData.demonsLow,
+        demonsHigh: audioData.demonsHigh,
       });
     }
 
@@ -381,6 +388,8 @@ export class App {
       high: audioData.u_high,
       beat: audioData.u_beat,
       coherence: effectiveCoherence,
+      demonTotal: audioData.demonTotal,
+      chakraTotal: audioData.chakraTotal,
     });
   }
 
