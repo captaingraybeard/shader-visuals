@@ -272,17 +272,62 @@ void main() {
   float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.3 * invMass * displaceScale;
   pos += dir * beatWave;
 
-  // ── Spotlight system: real segmented objects get amplified displacement ──
-  // a_objectId is 0-1 normalized (0 = background, >0 = unique objects)
-  float objId = a_objectId; // already 0-1
-  // Rolling selection: ~20% of objects "lit" at any time, cycling over ~10 seconds
-  float spotCycle = u_spotPhase * 0.1;
-  float objHash = fract(sin(objId * 127.1 + 311.7) * 43758.5453); // deterministic hash per object
-  float spotDist = abs(fract(objHash + spotCycle) - 0.5) * 2.0; // 0=selected, 1=not
-  float spotlight = smoothstep(0.2, 0.0, spotDist) * step(0.001, objId); // ~20% selected, skip background
-  // Amplify displacement for spotlit objects
-  float spotAmp = 1.0 + spotlight * 3.0 * displaceScale;
-  pos = position + (pos - position) * spotAmp;
+  // ── Spotlight system: 3 effects on real segmented objects ──
+  float objId = a_objectId;
+  float isObject = step(0.001, objId); // 0 for background, 1 for real objects
+  float spotCycle = u_spotPhase * 0.1; // slow ~10s cycle
+
+  // 3 independent hashes per object → 3 different effect selections
+  float h1 = fract(sin(objId * 127.1 + 311.7) * 43758.5453);
+  float h2 = fract(sin(objId * 269.3 + 183.1) * 28461.7231);
+  float h3 = fract(sin(objId * 419.7 + 57.3) * 61283.9157);
+
+  // Effect 1: SCALE/GROW — objects inflate, points push outward from center
+  float scaleDist = abs(fract(h1 + spotCycle) - 0.5) * 2.0;
+  float scaleActive = smoothstep(0.18, 0.0, scaleDist) * isObject;
+  // Grow = amplify displacement from original position + inflate size
+  float growFactor = 1.0 + scaleActive * energy * 4.0 * displaceScale;
+  pos = position + (pos - position) * growFactor;
+  // Also push points outward from object's local center (approximate via position hash)
+  vec3 objCenter = position; // each point pushes outward from its own rest position
+  float breathe = sin(t * 3.0 + h1 * 6.28) * 0.5 + 0.5;
+  pos += normalize(pos - objCenter + 0.001) * scaleActive * energy * breathe * 0.5 * displaceScale;
+
+  // Effect 2: DETACH/FLOAT — objects lift off and drift
+  float floatDist = abs(fract(h2 + spotCycle * 0.8 + 0.33) - 0.5) * 2.0;
+  float floatActive = smoothstep(0.15, 0.0, floatDist) * isObject;
+  // Upward lift + gentle drift
+  float liftHeight = floatActive * energy * 1.5 * displaceScale;
+  float driftX = sin(t * 1.2 + h2 * 6.28) * floatActive * 0.4 * displaceScale;
+  float driftZ = cos(t * 0.9 + h2 * 3.14) * floatActive * 0.3 * displaceScale;
+  pos.y += liftHeight * (0.5 + sin(t * 2.0 + objId * 50.0) * 0.5); // bobbing lift
+  pos.x += driftX;
+  pos.z += driftZ;
+  // Slow rotation around Y axis while floating
+  float floatAngle = t * 0.8 * floatActive;
+  float cosA = cos(floatAngle);
+  float sinA = sin(floatAngle);
+  vec3 centered = pos - position;
+  pos = position + vec3(centered.x * cosA - centered.z * sinA, centered.y, centered.x * sinA + centered.z * cosA);
+
+  // Effect 3: MULTIPLY/SHATTER — split object points into offset echoes
+  float shatterDist = abs(fract(h3 + spotCycle * 1.2 + 0.66) - 0.5) * 2.0;
+  float shatterActive = smoothstep(0.12, 0.0, shatterDist) * isObject;
+  // Use vertex index (via position hash) to assign echo groups
+  float vertHash = fract(sin(dot(position.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  float echoGroup = floor(vertHash * 3.0); // 3 echo groups
+  vec3 echoOffsets[3] = vec3[3](
+    vec3(0.5, 0.3, -0.2),
+    vec3(-0.4, -0.2, 0.4),
+    vec3(0.1, -0.5, -0.3)
+  );
+  // Points scatter into their echo positions
+  float shatterLerp = shatterActive * energy * displaceScale;
+  vec3 echoTarget = echoOffsets[int(echoGroup)] * (1.0 + sin(t * 2.5) * 0.3);
+  pos += echoTarget * shatterLerp;
+
+  // Combined spotlight intensity for size/color
+  float spotlight = max(scaleActive, max(floatActive, shatterActive));
 
   // Use Three.js built-in matrices (set from camera)
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos, 1.0);
@@ -291,14 +336,18 @@ void main() {
   float coherenceBoost = localCoherence * localCoherence * 1.0;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
-  ptSize *= (1.0 + spotlight * 1.5 * displaceScale); // spotlit objects get bigger too
+  ptSize *= (1.0 + scaleActive * energy * 2.0 * displaceScale); // scale effect inflates points
+  ptSize *= (1.0 + floatActive * 0.5); // floating objects slightly larger
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
   v_color = a_color;
   v_color += colorTint * displaceScale;
   v_color += vec3(0.04, 0.02, 0.05) * u_beat * displaceScale;
-  v_color += vec3(0.12, 0.08, 0.15) * spotlight * energy * displaceScale; // spotlit objects glow
+  // Spotlight glow per effect type
+  v_color += vec3(0.15, 0.05, 0.02) * scaleActive * energy * displaceScale;  // warm grow glow
+  v_color += vec3(0.05, 0.1, 0.2) * floatActive * energy * displaceScale;    // cool float glow
+  v_color += vec3(0.12, 0.02, 0.15) * shatterActive * energy * displaceScale; // purple shatter glow
 
   // ── Chakra color tinting ──
   vec3 chakraColors[7] = vec3[7](

@@ -93,12 +93,21 @@ async def extract_scene_objects(
 
             raw = json.loads(content)
 
-            # Normalize keys to int
+            # Normalize keys to int, deduplicate keywords
             result = {}
             for k, v in raw.items():
                 cat_id = int(k)
                 if 0 <= cat_id <= 5 and isinstance(v, list) and len(v) > 0:
-                    result[cat_id] = [str(s) for s in v]
+                    # Deduplicate while preserving order, case-insensitive
+                    seen = set()
+                    deduped = []
+                    for s in v:
+                        key = str(s).lower().strip()
+                        if key and key not in seen:
+                            seen.add(key)
+                            deduped.append(str(s))
+                    if deduped:
+                        result[cat_id] = deduped
 
             total = sum(len(v) for v in result.values())
             log.info(f"Extracted {total} keywords across {len(result)} categories:")

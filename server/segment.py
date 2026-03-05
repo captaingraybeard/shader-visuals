@@ -118,6 +118,8 @@ def segment_image(
 
             except Exception as e:
                 log.warning(f"SAM3 prompt '{prompt_text}' failed: {e}")
+                if "CUDA out of memory" in str(e):
+                    torch.cuda.empty_cache()
                 continue
 
         if cat_pixel_count > 0:
