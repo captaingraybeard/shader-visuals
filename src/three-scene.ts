@@ -216,7 +216,7 @@ void main() {
   float coherenceBoost = localCoherence * localCoherence;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
-  ptSize *= (1.0 + scaleActive * energy * 2.0 * displaceScale);
+  ptSize *= (1.0 + scaleActive * energy * 5.0 * displaceScale); // match grow displacement so object feels solid
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
