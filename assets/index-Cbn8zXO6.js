@@ -4336,22 +4336,22 @@ void main() {
   if (cat == 0) {
     energy = u_band0 * 0.6 + u_band1 * 0.4;
     float breath = sin(t * 1.5) * 0.5 + 0.5;
-    displacement = dir * energy * breath * 0.3;
+    displacement = dir * energy * breath * 0.8;
     colorTint = vec3(0.075, 0.025, 0.0) * energy;
-    sizeBoost = energy * 2.0;
+    sizeBoost = energy * 3.0;
   } else if (cat == 1) {
     energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
-    float swayX = sin(pos.y * 1.5 + pos.x * 0.3 + t * 2.0) * energy * 0.3;
-    float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.15;
-    float swayZ = sin(pos.y * 0.8 + t * 2.4) * energy * 0.1;
+    float swayX = sin(pos.y * 1.5 + pos.x * 0.3 + t * 2.0) * energy * 0.7;
+    float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.4;
+    float swayZ = sin(pos.y * 0.8 + t * 2.4) * energy * 0.25;
     displacement = vec3(swayX, swayY, swayZ);
     colorTint = vec3(-0.01, 0.06, 0.01) * energy;
     sizeBoost = energy * 1.5;
   } else if (cat == 2) {
     energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
-    float flowX = sin(pos.x * 0.4 + pos.y * 0.3 + t * 1.2) * energy * 0.4;
-    float flowY = cos(pos.y * 0.5 + pos.x * 0.2 + t * 0.9) * energy * 0.3;
-    float flowZ = sin(pos.x * 0.3 + pos.y * 0.4 + t * 1.5) * energy * 0.2;
+    float flowX = sin(pos.x * 0.4 + pos.y * 0.3 + t * 1.2) * energy * 0.9;
+    float flowY = cos(pos.y * 0.5 + pos.x * 0.2 + t * 0.9) * energy * 0.7;
+    float flowZ = sin(pos.x * 0.3 + pos.y * 0.4 + t * 1.5) * energy * 0.5;
     displacement = vec3(flowX, flowY, flowZ);
     float shimmer = sin(pos.x * 3.0 + pos.y * 2.0 + t * 8.0) * 0.5 + 0.5;
     colorTint = vec3(0.04, 0.05, 0.09) * energy * shimmer;
@@ -4359,22 +4359,22 @@ void main() {
   } else if (cat == 3) {
     energy = u_beat * 0.7 + u_band0 * 0.3;
     float rippleDist = length(pos.xz);
-    float ripple = sin(rippleDist * 4.0 - t * 6.0) * energy * 0.25;
+    float ripple = sin(rippleDist * 4.0 - t * 6.0) * energy * 0.6;
     displacement = vec3(0.0, ripple, 0.0);
     colorTint = vec3(0.06, 0.04, 0.0) * u_beat;
     sizeBoost = u_beat * 1.5;
   } else if (cat == 4) {
     energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
-    float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.06;
-    float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.04;
+    float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.2;
+    float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.15;
     displacement = vec3(vibX, vibY, 0.0);
     colorTint = vec3(0.025, 0.01, 0.06) * energy;
     sizeBoost = energy * 1.0;
   } else {
     energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
-    float driftX = sin(pos.x * 0.3 + t * 0.6) * energy * 0.2;
-    float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.15;
-    float driftZ = sin(pos.x * 0.2 + pos.y * 0.3 + t * 0.7) * energy * 0.1;
+    float driftX = sin(pos.x * 0.3 + t * 0.6) * energy * 0.5;
+    float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.4;
+    float driftZ = sin(pos.x * 0.2 + pos.y * 0.3 + t * 0.7) * energy * 0.3;
     displacement = vec3(driftX, driftY, driftZ);
     colorTint = vec3(0.015, 0.015, 0.025) * energy;
     sizeBoost = energy * 0.5;
@@ -4395,7 +4395,7 @@ void main() {
     + crownBoost
     - demonForce * 0.1
   , 0.0, 1.0);
-  float displaceScale = mix(1.0, 0.05, segCoh);
+  float displaceScale = 1.0 - segCoh; // 0 at full coherence, 1 at full chaos
 
   // ── Per-segment chakra healing displacement ──
   vec3 chakraHealDisp = vec3(0.0);
@@ -4461,19 +4461,19 @@ void main() {
 
   float angle = atan(pos.z, pos.x);
   float radius = length(pos.xz);
-  float spiral = sin(angle * 3.0 + radius * 2.0 - t * 1.5) * u_mid * 0.06;
+  float spiral = sin(angle * 3.0 + radius * 2.0 - t * 1.5) * u_mid * 0.25;
   vec3 tangent = normalize(vec3(-pos.z, 0.0, pos.x) + 0.001);
   pos += tangent * spiral * invMass * displaceScale;
 
   float dist = length(pos);
-  float pulse = sin(dist * 5.0 - t * 4.0) * u_beat * 0.1;
+  float pulse = sin(dist * 5.0 - t * 4.0) * u_beat * 0.4;
   pos += normalize(pos + 0.001) * pulse * invMass * displaceScale;
 
   pos += vec3(
     sin(pos.x * 7.0 + pos.y * 3.0) * u_form * 0.04,
     sin(pos.y * 6.0 + pos.z * 4.0) * u_form * 0.04,
     sin(pos.z * 5.0 + pos.x * 3.5) * u_form * 0.04
-  );
+  ) * displaceScale;
 
   float depthProtection = depthFactor * 0.4;
   float localCoherence = clamp(segCoh + depthProtection * (1.0 - segCoh), 0.0, 1.0);
@@ -4484,11 +4484,11 @@ void main() {
     sin(pos.x * chaosFreq + pos.y * 1.3 + t * 0.8),
     cos(pos.y * chaosFreq + pos.z * 1.1 + t * 0.6),
     sin(pos.z * chaosFreq + pos.x * 0.9 + t * 1.0)
-  ) * localChaos * 1.5 * invMass;
-  pos += scatter;
+  ) * localChaos * 2.5 * invMass;
+  pos += scatter * displaceScale;
 
   float zDist = u_projMode > 0.5 ? length(position) : -position.z;
-  float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.08 * invMass * displaceScale;
+  float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.3 * invMass * displaceScale;
   pos += dir * beatWave;
 
   // Use Three.js built-in matrices (set from camera)
