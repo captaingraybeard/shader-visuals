@@ -4260,6 +4260,7 @@ uniform float u_transition;
 uniform float u_form;
 uniform float u_highlightCat;
 uniform float u_projMode;
+uniform float u_spotPhase; // cycles over time, selects which sub-objects are "lit up"
 
 // Chakra system uniforms
 uniform float u_chakra[7];     // root, sacral, solar, heart, throat, thirdEye, crown
@@ -4443,7 +4444,7 @@ void main() {
 
   vec3 demonHighDisp = vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * u_demonsHigh * effectiveDemon * 0.5;
 
-  pos += chakraHealDisp + demonLowDisp + demonHighDisp;
+  pos += (chakraHealDisp + demonLowDisp + demonHighDisp) * displaceScale;
 
   float chladni = sin(pos.x * 6.0 + t * 0.5) * sin(pos.y * 6.0 + t * 0.3);
   displacement *= mix(1.0, chladni, 0.4);
@@ -4491,6 +4492,19 @@ void main() {
   float beatWave = sin(zDist * 3.0 - t * 5.0) * u_beat * 0.3 * invMass * displaceScale;
   pos += dir * beatWave;
 
+  // ── Spotlight system: procedural sub-objects get amplified displacement ──
+  // Spatial hash creates ~50 pseudo-objects across the scene
+  float gridScale = 1.5;
+  vec3 gridCell = floor(position * gridScale);
+  float objHash = fract(sin(dot(gridCell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+  // Rolling selection: 3-4 objects "lit" at any time, cycling over ~8 seconds
+  float spotCycle = u_spotPhase * 0.125; // slow cycle
+  float spotDist = abs(fract(objHash + spotCycle) - 0.5) * 2.0; // 0=selected, 1=not
+  float spotlight = smoothstep(0.15, 0.0, spotDist); // ~15% of objects selected
+  // Amplify displacement for spotlit objects
+  float spotAmp = 1.0 + spotlight * 3.0 * displaceScale; // up to 4x displacement when active
+  pos = position + (pos - position) * spotAmp;
+
   // Use Three.js built-in matrices (set from camera)
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos, 1.0);
 
@@ -4498,12 +4512,14 @@ void main() {
   float coherenceBoost = localCoherence * localCoherence * 1.0;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
+  ptSize *= (1.0 + spotlight * 1.5 * displaceScale); // spotlit objects get bigger too
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
   v_color = a_color;
-  v_color += colorTint;
-  v_color += vec3(0.04, 0.02, 0.05) * u_beat;
+  v_color += colorTint * displaceScale;
+  v_color += vec3(0.04, 0.02, 0.05) * u_beat * displaceScale;
+  v_color += vec3(0.12, 0.08, 0.15) * spotlight * energy * displaceScale; // spotlit objects glow
 
   // ── Chakra color tinting ──
   vec3 chakraColors[7] = vec3[7](
@@ -4559,7 +4575,7 @@ void main() {
     fragColor = vec4(v_color, v_alpha);
   }
 }
-`;function makeUniforms(){return{u_time:{value:0},u_bass:{value:0},u_mid:{value:0},u_high:{value:0},u_beat:{value:0},u_band0:{value:0},u_band1:{value:0},u_band2:{value:0},u_band3:{value:0},u_band4:{value:0},u_band5:{value:0},u_band6:{value:0},u_band7:{value:0},u_coherence:{value:0},u_segCoherence:{value:[0,0,0,0,0,0]},u_pointScale:{value:1},u_transition:{value:1},u_form:{value:0},u_highlightCat:{value:-1},u_projMode:{value:0},u_chakra:{value:[0,0,0,0,0,0,0]},u_demonsLow:{value:0},u_demonsHigh:{value:0},u_positionTex:{value:_dummyTexture},u_texSize:{value:new Vector2(1,1)},u_creaturesActive:{value:0}}}function buildPoints(s){const e=new BufferGeometry;e.setAttribute("position",new Float32BufferAttribute(s.positions,3)),e.setAttribute("a_color",new Float32BufferAttribute(s.colors,3)),e.setAttribute("a_segment",new Float32BufferAttribute(s.segments,1));const n=new ShaderMaterial({glslVersion:GLSL3,vertexShader:VERT,fragmentShader:FRAG,uniforms:makeUniforms(),transparent:!0,depthWrite:!0,depthTest:!0,blending:NormalBlending}),i=new Points(e,n);return i.frustumCulled=!1,{points:i,material:n,geometry:e}}const _dummyTexture=new DataTexture(new Float32Array([0,0,0,0]),1,1,RGBAFormat,FloatType);_dummyTexture.needsUpdate=!0;const _tmpProjection=new Matrix4,_tmpView=new Matrix4;class ThreeScene{constructor(e){te(this,"renderer");te(this,"scene");te(this,"camera");te(this,"current",null);te(this,"prev",null);te(this,"crossfading",!1);te(this,"crossfadeStart",0);te(this,"crossfadeDuration",1500);te(this,"creatureSystem",null);te(this,"onError",null);this.renderer=new WebGLRenderer({canvas:e,alpha:!1,antialias:!1}),this.renderer.autoClear=!0,this.renderer.debug.checkShaderErrors=!0,this.scene=new Scene,this.camera=new PerspectiveCamera(60,e.clientWidth/e.clientHeight,.1,100),this.camera.matrixAutoUpdate=!1,this.camera.matrixWorldAutoUpdate=!1,this.resize(),window.addEventListener("resize",()=>this.resize())}get hasCloud(){return this.current!==null}setPointCloud(e){this.current&&(this.disposePrev(),this.prev=this.current,this.crossfading=!0,this.crossfadeStart=performance.now()),this.current=buildPoints(e),this.scene.add(this.current.points),this.creatureSystem||(this.creatureSystem=new CreatureSystem(this.renderer,e.count)),this.creatureSystem.setPointCloud(e);const[n,i]=this.creatureSystem.getTexSize();this.current.material.uniforms.u_texSize.value.set(n,i)}update(e){_tmpProjection.fromArray(e.projection),_tmpView.fromArray(e.view),this.camera.projectionMatrix.copy(_tmpProjection),this.camera.projectionMatrixInverse.copy(_tmpProjection).invert(),this.camera.matrixWorldInverse.copy(_tmpView),this.camera.matrixWorld.copy(_tmpView).invert();let n=1;this.crossfading&&(n=Math.min((performance.now()-this.crossfadeStart)/this.crossfadeDuration,1)),this.prev&&(this.prev.points.visible=this.crossfading,this.crossfading&&this.updateUniforms(this.prev.material,e,1-n)),this.current&&(this.current.points.visible=!0,this.updateUniforms(this.current.material,e,this.crossfading?n:1)),this.crossfading&&n>=1&&(this.disposePrev(),this.crossfading=!1)}resize(){const e=this.renderer.domElement,n=window.devicePixelRatio||1,i=e.clientWidth*n,o=e.clientHeight*n;(e.width!==i||e.height!==o)&&this.renderer.setSize(i,o,!1)}dispose(){this.disposePrev(),this.current&&(this.scene.remove(this.current.points),this.current.geometry.dispose(),this.current.material.dispose(),this.current=null),this.creatureSystem&&(this.creatureSystem.dispose(),this.creatureSystem=null),this.renderer.dispose()}updateCreatures(e,n,i){if(!this.creatureSystem||!this.current)return;this.creatureSystem.update(e,n,i);const o=this.creatureSystem.hasCreatures,u=this.current.material;if(u.uniforms.u_creaturesActive.value=o?1:0,o){const l=this.creatureSystem.getPositionTexture();u.uniforms.u_positionTex.value=l}}updateUniforms(e,n,i){const o=e.uniforms;o.u_time.value=n.time,o.u_bass.value=n.bass,o.u_mid.value=n.mid,o.u_high.value=n.high,o.u_beat.value=n.beat,o.u_band0.value=n.band0,o.u_band1.value=n.band1,o.u_band2.value=n.band2,o.u_band3.value=n.band3,o.u_band4.value=n.band4,o.u_band5.value=n.band5,o.u_band6.value=n.band6,o.u_band7.value=n.band7,o.u_coherence.value=n.coherence,o.u_segCoherence.value=n.segCoherence,o.u_pointScale.value=n.pointScale,o.u_transition.value=i,o.u_form.value=n.form,o.u_highlightCat.value=n.highlightCat,o.u_projMode.value=n.projMode,o.u_chakra.value=n.chakra,o.u_demonsLow.value=n.demonsLow,o.u_demonsHigh.value=n.demonsHigh}disposePrev(){this.prev&&(this.scene.remove(this.prev.points),this.prev.geometry.dispose(),this.prev.material.dispose(),this.prev=null)}}const CopyShader$1={name:"CopyShader",uniforms:{tDiffuse:{value:null},opacity:{value:1}},vertexShader:`
+`;function makeUniforms(){return{u_time:{value:0},u_bass:{value:0},u_mid:{value:0},u_high:{value:0},u_beat:{value:0},u_band0:{value:0},u_band1:{value:0},u_band2:{value:0},u_band3:{value:0},u_band4:{value:0},u_band5:{value:0},u_band6:{value:0},u_band7:{value:0},u_coherence:{value:0},u_segCoherence:{value:[0,0,0,0,0,0]},u_pointScale:{value:1},u_transition:{value:1},u_form:{value:0},u_highlightCat:{value:-1},u_projMode:{value:0},u_spotPhase:{value:0},u_chakra:{value:[0,0,0,0,0,0,0]},u_demonsLow:{value:0},u_demonsHigh:{value:0},u_positionTex:{value:_dummyTexture},u_texSize:{value:new Vector2(1,1)},u_creaturesActive:{value:0}}}function buildPoints(s){const e=new BufferGeometry;e.setAttribute("position",new Float32BufferAttribute(s.positions,3)),e.setAttribute("a_color",new Float32BufferAttribute(s.colors,3)),e.setAttribute("a_segment",new Float32BufferAttribute(s.segments,1));const n=new ShaderMaterial({glslVersion:GLSL3,vertexShader:VERT,fragmentShader:FRAG,uniforms:makeUniforms(),transparent:!0,depthWrite:!0,depthTest:!0,blending:NormalBlending}),i=new Points(e,n);return i.frustumCulled=!1,{points:i,material:n,geometry:e}}const _dummyTexture=new DataTexture(new Float32Array([0,0,0,0]),1,1,RGBAFormat,FloatType);_dummyTexture.needsUpdate=!0;const _tmpProjection=new Matrix4,_tmpView=new Matrix4;class ThreeScene{constructor(e){te(this,"renderer");te(this,"scene");te(this,"camera");te(this,"current",null);te(this,"prev",null);te(this,"crossfading",!1);te(this,"crossfadeStart",0);te(this,"crossfadeDuration",1500);te(this,"creatureSystem",null);te(this,"onError",null);this.renderer=new WebGLRenderer({canvas:e,alpha:!1,antialias:!1}),this.renderer.autoClear=!0,this.renderer.debug.checkShaderErrors=!0,this.scene=new Scene,this.camera=new PerspectiveCamera(60,e.clientWidth/e.clientHeight,.1,100),this.camera.matrixAutoUpdate=!1,this.camera.matrixWorldAutoUpdate=!1,this.resize(),window.addEventListener("resize",()=>this.resize())}get hasCloud(){return this.current!==null}setPointCloud(e){this.current&&(this.disposePrev(),this.prev=this.current,this.crossfading=!0,this.crossfadeStart=performance.now()),this.current=buildPoints(e),this.scene.add(this.current.points),this.creatureSystem||(this.creatureSystem=new CreatureSystem(this.renderer,e.count)),this.creatureSystem.setPointCloud(e);const[n,i]=this.creatureSystem.getTexSize();this.current.material.uniforms.u_texSize.value.set(n,i)}update(e){_tmpProjection.fromArray(e.projection),_tmpView.fromArray(e.view),this.camera.projectionMatrix.copy(_tmpProjection),this.camera.projectionMatrixInverse.copy(_tmpProjection).invert(),this.camera.matrixWorldInverse.copy(_tmpView),this.camera.matrixWorld.copy(_tmpView).invert();let n=1;this.crossfading&&(n=Math.min((performance.now()-this.crossfadeStart)/this.crossfadeDuration,1)),this.prev&&(this.prev.points.visible=this.crossfading,this.crossfading&&this.updateUniforms(this.prev.material,e,1-n)),this.current&&(this.current.points.visible=!0,this.updateUniforms(this.current.material,e,this.crossfading?n:1)),this.crossfading&&n>=1&&(this.disposePrev(),this.crossfading=!1)}resize(){const e=this.renderer.domElement,n=window.devicePixelRatio||1,i=e.clientWidth*n,o=e.clientHeight*n;(e.width!==i||e.height!==o)&&this.renderer.setSize(i,o,!1)}dispose(){this.disposePrev(),this.current&&(this.scene.remove(this.current.points),this.current.geometry.dispose(),this.current.material.dispose(),this.current=null),this.creatureSystem&&(this.creatureSystem.dispose(),this.creatureSystem=null),this.renderer.dispose()}updateCreatures(e,n,i){if(!this.creatureSystem||!this.current)return;this.creatureSystem.update(e,n,i);const o=this.creatureSystem.hasCreatures,u=this.current.material;if(u.uniforms.u_creaturesActive.value=o?1:0,o){const l=this.creatureSystem.getPositionTexture();u.uniforms.u_positionTex.value=l}}updateUniforms(e,n,i){const o=e.uniforms;o.u_time.value=n.time,o.u_bass.value=n.bass,o.u_mid.value=n.mid,o.u_high.value=n.high,o.u_beat.value=n.beat,o.u_band0.value=n.band0,o.u_band1.value=n.band1,o.u_band2.value=n.band2,o.u_band3.value=n.band3,o.u_band4.value=n.band4,o.u_band5.value=n.band5,o.u_band6.value=n.band6,o.u_band7.value=n.band7,o.u_coherence.value=n.coherence,o.u_segCoherence.value=n.segCoherence,o.u_pointScale.value=n.pointScale,o.u_transition.value=i,o.u_form.value=n.form,o.u_highlightCat.value=n.highlightCat,o.u_projMode.value=n.projMode,o.u_spotPhase.value=n.time,o.u_chakra.value=n.chakra,o.u_demonsLow.value=n.demonsLow,o.u_demonsHigh.value=n.demonsHigh}disposePrev(){this.prev&&(this.scene.remove(this.prev.points),this.prev.geometry.dispose(),this.prev.material.dispose(),this.prev=null)}}const CopyShader$1={name:"CopyShader",uniforms:{tDiffuse:{value:null},opacity:{value:1}},vertexShader:`
 
 		varying vec2 vUv;
 
