@@ -476,7 +476,7 @@ export class ThreePostProcess {
     chakraTotal?: number;
   }): void {
     const chaos = 1.0 - opts.coherence;
-    const iterations = Math.max(1, Math.min(3, Math.round(1 + chaos * 2)));
+    const iterations = Math.max(1, Math.min(2, Math.round(1 + chaos * 2)));
 
     // Set uniforms on main combined pass
     this.setEffectUniforms(this.combinedPass, opts, 0);
@@ -495,8 +495,8 @@ export class ThreePostProcess {
 
     // Bloom params — demons drive bloom more than chaos
     const demonTotal = (opts as any).demonTotal ?? 0;
-    this.bloomPass.strength = 0.2 + chaos * 0.3 + demonTotal * 0.5 + opts.bass * 0.15;
-    this.bloomPass.threshold = 0.9 - chaos * 0.2;
+    this.bloomPass.strength = Math.min(0.6, 0.2 + chaos * 0.3 + demonTotal * 0.5 + opts.bass * 0.15);
+    this.bloomPass.threshold = 0.92;
 
     // ── Pass 1: Full render (scene + all effects) ──
     this.composer.render();

@@ -115,7 +115,7 @@ void main() {
     energy = u_band0 * 0.6 + u_band1 * 0.4;
     float breath = sin(t * 1.5) * 0.5 + 0.5;
     displacement = dir * energy * breath * 0.3;
-    colorTint = vec3(0.15, 0.05, 0.0) * energy;
+    colorTint = vec3(0.075, 0.025, 0.0) * energy;
     sizeBoost = energy * 2.0;
   } else if (cat == 1) {
     energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
@@ -123,7 +123,7 @@ void main() {
     float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.15;
     float swayZ = sin(pos.y * 0.8 + t * 2.4) * energy * 0.1;
     displacement = vec3(swayX, swayY, swayZ);
-    colorTint = vec3(-0.02, 0.12, 0.02) * energy;
+    colorTint = vec3(-0.01, 0.06, 0.01) * energy;
     sizeBoost = energy * 1.5;
   } else if (cat == 2) {
     energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
@@ -132,21 +132,21 @@ void main() {
     float flowZ = sin(pos.x * 0.3 + pos.y * 0.4 + t * 1.5) * energy * 0.2;
     displacement = vec3(flowX, flowY, flowZ);
     float shimmer = sin(pos.x * 3.0 + pos.y * 2.0 + t * 8.0) * 0.5 + 0.5;
-    colorTint = vec3(0.08, 0.1, 0.18) * energy * shimmer;
+    colorTint = vec3(0.04, 0.05, 0.09) * energy * shimmer;
     sizeBoost = energy * 1.0;
   } else if (cat == 3) {
     energy = u_beat * 0.7 + u_band0 * 0.3;
     float rippleDist = length(pos.xz);
     float ripple = sin(rippleDist * 4.0 - t * 6.0) * energy * 0.25;
     displacement = vec3(0.0, ripple, 0.0);
-    colorTint = vec3(0.12, 0.08, 0.0) * u_beat;
+    colorTint = vec3(0.06, 0.04, 0.0) * u_beat;
     sizeBoost = u_beat * 1.5;
   } else if (cat == 4) {
     energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
     float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.06;
     float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.04;
     displacement = vec3(vibX, vibY, 0.0);
-    colorTint = vec3(0.05, 0.02, 0.12) * energy;
+    colorTint = vec3(0.025, 0.01, 0.06) * energy;
     sizeBoost = energy * 1.0;
   } else {
     energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
@@ -154,7 +154,7 @@ void main() {
     float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.15;
     float driftZ = sin(pos.x * 0.2 + pos.y * 0.3 + t * 0.7) * energy * 0.1;
     displacement = vec3(driftX, driftY, driftZ);
-    colorTint = vec3(0.03, 0.03, 0.05) * energy;
+    colorTint = vec3(0.015, 0.015, 0.025) * energy;
     sizeBoost = energy * 0.5;
   }
 
@@ -171,7 +171,7 @@ void main() {
     u_segCoherence[cat]
     + myChakraEnergy * 0.5
     + crownBoost
-    - demonForce * 0.3
+    - demonForce * 0.1
   , 0.0, 1.0);
   float displaceScale = mix(1.0, 0.05, segCoh);
 
@@ -273,15 +273,15 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos, 1.0);
 
   float baseSize = u_pointScale;
-  float coherenceBoost = localCoherence * localCoherence * 2.0;
+  float coherenceBoost = localCoherence * localCoherence * 1.0;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
-  v_color = a_color * 1.1;
+  v_color = a_color;
   v_color += colorTint;
-  v_color += vec3(0.08, 0.04, 0.1) * u_beat;
+  v_color += vec3(0.04, 0.02, 0.05) * u_beat;
 
   // ── Chakra color tinting ──
   vec3 chakraColors[7] = vec3[7](
@@ -293,8 +293,8 @@ void main() {
     vec3(0.5, 0.2, 0.8),  // Third Eye - indigo
     vec3(0.9, 0.9, 1.0)   // Crown - white/gold
   );
-  v_color += chakraColors[myChakra] * myChakraEnergy * 0.15;
-  v_color += vec3(0.1, 0.08, 0.05) * u_chakra[6]; // Crown shimmer on all
+  v_color += chakraColors[myChakra] * myChakraEnergy * 0.08;
+  v_color += vec3(0.05, 0.04, 0.02) * u_chakra[6]; // Crown shimmer on all
 
   if (u_highlightCat > -0.5) {
     float catF = float(cat);

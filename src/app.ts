@@ -23,6 +23,11 @@ export class App {
   private running = false;
   private lastFrameTime = 0;
 
+  // Pre-allocated arrays for render loop (avoid GC pressure)
+  private _bandEnergies = new Float64Array(6);
+  private _segCoherence = [0, 0, 0, 0, 0, 0];
+  private _chakra = [0, 0, 0, 0, 0, 0, 0];
+
   // Journey mode
   private journeyMode = false;
   private journeyGenerating = false;
@@ -319,17 +324,18 @@ export class App {
     const effectiveCoherence = this.coherence;
 
     // Per-segment coherence: audio energy disrupts each segment's coherence
-    const sensitivity = 2.0; // how much audio disrupts coherence
+    const sensitivity = 0.8; // how much audio disrupts coherence
     const base = this.coherence;
-    const bandEnergies = [
-      audioData.u_band0 * 0.6 + audioData.u_band1 * 0.4,                              // cat 0: BASS_SUBJECT
-      audioData.u_band2 * 0.3 + audioData.u_band3 * 0.5 + audioData.u_band4 * 0.2,    // cat 1: MID_ORGANIC
-      audioData.u_band5 * 0.2 + audioData.u_band6 * 0.4 + audioData.u_band7 * 0.4,    // cat 2: HIGH_SKY
-      audioData.u_beat * 0.7 + audioData.u_band0 * 0.3,                                // cat 3: BEAT_GROUND
-      audioData.u_band3 * 0.3 + audioData.u_band4 * 0.4 + audioData.u_band5 * 0.3,    // cat 4: MID_STRUCTURE
-      audioData.u_band1 * 0.3 + audioData.u_band2 * 0.4 + audioData.u_band3 * 0.3,    // cat 5: LOW_AMBIENT
-    ];
-    const segCoherence = bandEnergies.map(e => Math.max(0, Math.min(1, base - e * sensitivity)));
+    const floor = base * 0.6; // at 100% coherence, segments never go below 60%
+    const be = this._bandEnergies;
+    be[0] = audioData.u_band0 * 0.6 + audioData.u_band1 * 0.4;                              // cat 0: BASS_SUBJECT
+    be[1] = audioData.u_band2 * 0.3 + audioData.u_band3 * 0.5 + audioData.u_band4 * 0.2;    // cat 1: MID_ORGANIC
+    be[2] = audioData.u_band5 * 0.2 + audioData.u_band6 * 0.4 + audioData.u_band7 * 0.4;    // cat 2: HIGH_SKY
+    be[3] = audioData.u_beat * 0.7 + audioData.u_band0 * 0.3;                                // cat 3: BEAT_GROUND
+    be[4] = audioData.u_band3 * 0.3 + audioData.u_band4 * 0.4 + audioData.u_band5 * 0.3;    // cat 4: MID_STRUCTURE
+    be[5] = audioData.u_band1 * 0.3 + audioData.u_band2 * 0.4 + audioData.u_band3 * 0.3;    // cat 5: LOW_AMBIENT
+    const segCoherence = this._segCoherence;
+    for (let i = 0; i < 6; i++) segCoherence[i] = Math.max(floor, Math.min(1, base - be[i] * sensitivity));
 
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
@@ -370,11 +376,10 @@ export class App {
         form: this.form,
         highlightCat: this.highlightCat,
         projMode: this.panoramaMode ? 1 : 0,
-        chakra: [
-          audioData.chakraRoot, audioData.chakraSacral, audioData.chakraSolar,
-          audioData.chakraHeart, audioData.chakraThroat, audioData.chakraThirdEye,
-          audioData.chakraCrown,
-        ],
+        chakra: (this._chakra[0] = audioData.chakraRoot, this._chakra[1] = audioData.chakraSacral,
+          this._chakra[2] = audioData.chakraSolar, this._chakra[3] = audioData.chakraHeart,
+          this._chakra[4] = audioData.chakraThroat, this._chakra[5] = audioData.chakraThirdEye,
+          this._chakra[6] = audioData.chakraCrown, this._chakra),
         demonsLow: audioData.demonsLow,
         demonsHigh: audioData.demonsHigh,
       });
