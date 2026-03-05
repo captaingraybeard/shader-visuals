@@ -174,37 +174,44 @@ void main() {
   pos += dir * beatWave;
 
   // ── Spotlight system: 3 effects on segmented objects ──
+  // Use real object IDs when available, spatial hash fallback when not
   float objId = a_objectId;
-  float isObject = step(0.001, objId);
+  float hasRealObjects = step(0.001, u_numObjects);
+  // Spatial grid hash for fallback (when server hasn't sent object IDs yet)
+  vec3 gridCell = floor(position * 1.2);
+  float spatialId = fract(dot(gridCell, vec3(127.1, 311.7, 74.7)) * 0.00123);
+  // Use real objectId if available, otherwise spatial hash
+  float effectiveId = mix(spatialId, objId, hasRealObjects);
+  float isObject = mix(1.0, step(0.001, objId), hasRealObjects); // spatial: all active, real: skip bg
   float spotCycle = u_spotPhase * 0.1;
 
-  // Cheap hashes per object (integer-style, no sin)
-  float oh1 = fract(objId * 127.1 + 0.7);
-  float oh2 = fract(objId * 269.3 + 0.3);
-  float oh3 = fract(objId * 419.7 + 0.1);
+  // Cheap hashes per object
+  float oh1 = fract(effectiveId * 127.1 + 0.7);
+  float oh2 = fract(effectiveId * 269.3 + 0.3);
+  float oh3 = fract(effectiveId * 419.7 + 0.1);
 
   // Effect 1: SCALE/GROW
   float scaleDist = abs(fract(oh1 + spotCycle) - 0.5) * 2.0;
-  float scaleActive = smoothstep(0.18, 0.0, scaleDist) * isObject;
-  float growFactor = 1.0 + scaleActive * energy * 4.0 * displaceScale;
+  float scaleActive = smoothstep(0.25, 0.0, scaleDist) * isObject; // wider selection (~25%)
+  float growFactor = 1.0 + scaleActive * energy * 6.0 * displaceScale; // stronger grow
   pos = position + (pos - position) * growFactor;
 
   // Effect 2: DETACH/FLOAT
   float floatDist = abs(fract(oh2 + spotCycle * 0.8 + 0.33) - 0.5) * 2.0;
-  float floatActive = smoothstep(0.15, 0.0, floatDist) * isObject;
-  float liftHeight = floatActive * energy * 1.5 * displaceScale;
-  pos.y += liftHeight * (0.5 + sin(t * 2.0 + objId * 50.0) * 0.5);
-  pos.x += sin(t * 1.2 + oh2 * 6.28) * floatActive * 0.4 * displaceScale;
-  pos.z += cos(t * 0.9 + oh2 * 3.14) * floatActive * 0.3 * displaceScale;
+  float floatActive = smoothstep(0.22, 0.0, floatDist) * isObject;
+  float liftHeight = floatActive * energy * 2.5 * displaceScale; // stronger lift
+  pos.y += liftHeight * (0.5 + sin(t * 2.0 + effectiveId * 50.0) * 0.5);
+  pos.x += sin(t * 1.2 + oh2 * 6.28) * floatActive * 0.7 * displaceScale;
+  pos.z += cos(t * 0.9 + oh2 * 3.14) * floatActive * 0.5 * displaceScale;
 
   // Effect 3: SHATTER/ECHO
   float shatterDist = abs(fract(oh3 + spotCycle * 1.2 + 0.66) - 0.5) * 2.0;
-  float shatterActive = smoothstep(0.12, 0.0, shatterDist) * isObject;
+  float shatterActive = smoothstep(0.2, 0.0, shatterDist) * isObject;
   float vertHash = fract(dot(position.xy, vec2(12.9898, 78.233)));
   float echoGroup = floor(vertHash * 3.0);
-  vec3 echoDir = echoGroup < 1.0 ? vec3(0.5, 0.3, -0.2) :
-                 echoGroup < 2.0 ? vec3(-0.4, -0.2, 0.4) :
-                                   vec3(0.1, -0.5, -0.3);
+  vec3 echoDir = echoGroup < 1.0 ? vec3(0.8, 0.5, -0.3) :
+                 echoGroup < 2.0 ? vec3(-0.6, -0.3, 0.6) :
+                                   vec3(0.2, -0.7, -0.5);
   pos += echoDir * shatterActive * energy * displaceScale * (1.0 + sin(t * 2.5) * 0.3);
 
   float spotlight = max(scaleActive, max(floatActive, shatterActive));
@@ -223,9 +230,9 @@ void main() {
   v_color = a_color;
   v_color += colorTint * displaceScale;
   v_color += vec3(0.04, 0.02, 0.05) * u_beat * displaceScale;
-  v_color += vec3(0.15, 0.05, 0.02) * scaleActive * energy * displaceScale;
-  v_color += vec3(0.05, 0.1, 0.2) * floatActive * energy * displaceScale;
-  v_color += vec3(0.12, 0.02, 0.15) * shatterActive * energy * displaceScale;
+  v_color += vec3(0.25, 0.1, 0.03) * scaleActive * energy * displaceScale;
+  v_color += vec3(0.08, 0.15, 0.3) * floatActive * energy * displaceScale;
+  v_color += vec3(0.2, 0.04, 0.25) * shatterActive * energy * displaceScale;
 
   if (u_highlightCat > -0.5) {
     float catF = float(cat);
@@ -371,7 +378,7 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
     depthTest: true,
     blending: THREE.NormalBlending,
   });
-  backMaterial.uniforms.u_layerAtten.value = 0.05;
+  backMaterial.uniforms.u_layerAtten.value = 0.01; // nearly frozen
 
   const backLayer = new THREE.Points(geometry, backMaterial);
   backLayer.frustumCulled = false;
@@ -499,7 +506,7 @@ export class ThreeScene {
       this.current.backLayer.visible = true;
       this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
       this.updateUniforms(this.current.backMaterial, opts, this.crossfading ? crossT : 1.0);
-      this.current.backMaterial.uniforms.u_pointScale.value = opts.pointScale * 0.85;
+      this.current.backMaterial.uniforms.u_pointScale.value = opts.pointScale * 0.95;
     }
 
     // Crossfade complete — dispose prev
