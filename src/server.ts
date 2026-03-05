@@ -307,6 +307,9 @@ function parsePackedPointCloud(
   const isQuantized = formatInfo?.format === 'quantized';
   const hasObjectIds = (formatInfo?.bytes_per_point ?? 0) >= 11;
   console.log(`[PointCloud] format: ${formatInfo?.format}, bpp: ${formatInfo?.bytes_per_point}, hasObjectIds: ${hasObjectIds}, numObjects: ${formatInfo?.num_objects ?? 0}, points: ${pointCount}`);
+  if (metadata.image_url) console.log(`[Generation] image: ${metadata.image_url}`);
+  if (metadata.segments_url) console.log(`[Generation] segments: ${metadata.segments_url}`);
+  if (metadata.objects_url) console.log(`[Generation] objects: ${metadata.objects_url}`);
 
   const positions = new Float32Array(pointCount * 3);
   const colors = new Float32Array(pointCount * 3);

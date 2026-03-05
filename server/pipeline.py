@@ -12,7 +12,7 @@ from .depth import estimate_depth
 from .segment import segment_image
 from .pointcloud import build_point_cloud
 from .storage import save_generation
-from .r2 import is_r2_configured, upload_pointcloud
+from .r2 import is_r2_configured, upload_pointcloud, upload_image
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ async def run_pipeline(
         ],
         "timing": timings,
     }
-    gen_id = save_generation(image, depth, segments, metadata)
+    gen_id = save_generation(image, depth, segments, metadata, object_map=object_map)
     metadata["generation_id"] = gen_id
     metadata["stride"] = stride
 
@@ -104,6 +104,28 @@ async def run_pipeline(
         log.info(f"R2 upload: {len(packed_bytes)/(1024*1024):.1f}MB raw → {len(compressed)/(1024*1024):.1f}MB compressed → {r2_url}")
         # Return None for bytes — handler will use URL instead
         packed_bytes = None
+
+        # Upload visualization images to R2
+        from .storage import _segments_to_color, _objects_to_color
+        from io import BytesIO
+        try:
+            # Category segmentation map
+            seg_buf = BytesIO()
+            _segments_to_color(segments).save(seg_buf, format="PNG")
+            metadata["segments_url"] = upload_image(seg_buf.getvalue(), gen_id, "segments.png")
+
+            # Per-object segmentation map
+            if object_map is not None and object_map.max() > 0:
+                obj_buf = BytesIO()
+                _objects_to_color(object_map).save(obj_buf, format="PNG")
+                metadata["objects_url"] = upload_image(obj_buf.getvalue(), gen_id, "objects.png")
+
+            # Original image
+            img_buf = BytesIO()
+            image.save(img_buf, format="PNG")
+            metadata["image_url"] = upload_image(img_buf.getvalue(), gen_id, "image.png")
+        except Exception as e:
+            log.warning(f"Failed to upload visualization images: {e}")
 
     timings["total_ms"] = int((time.time() - t0) * 1000)
     log.info(f"Pipeline complete: {gen_id} in {timings['total_ms']}ms ({point_count} points, stride={stride})")

@@ -82,3 +82,26 @@ def upload_pointcloud(data: bytes, gen_id: str, compressed: bool = True) -> str:
     size_mb = len(data) / (1024 * 1024)
     log.info(f"Uploaded {size_mb:.1f}MB to R2: {key}")
     return url
+
+
+def upload_image(data: bytes, gen_id: str, name: str) -> str:
+    """Upload a PNG image to R2. Returns public URL."""
+    client = _get_client()
+    key = f"generations/{gen_id}/{name}"
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=data,
+        ContentType="image/png",
+        CacheControl="public, max-age=86400",
+    )
+    if R2_PUBLIC_DOMAIN:
+        url = f"https://{R2_PUBLIC_DOMAIN}/{key}"
+    else:
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": R2_BUCKET, "Key": key},
+            ExpiresIn=3600,
+        )
+    log.info(f"Uploaded image to R2: {key}")
+    return url
