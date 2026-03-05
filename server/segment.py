@@ -54,6 +54,8 @@ def segment_image(
 
     # Default to ambient (category 5)
     segment_map = np.full((h, w), 5, dtype=np.uint8)
+    object_map = np.zeros((h, w), dtype=np.uint8)  # unique ID per mask instance
+    next_object_id = 1  # 0 = background/ambient
     detected = []
 
     # Set image once
@@ -101,6 +103,9 @@ def segment_image(
                         continue
 
                     segment_map[mask_np] = cat_id
+                    if next_object_id < 255:
+                        object_map[mask_np] = next_object_id
+                        next_object_id += 1
                     cat_pixel_count += pixel_count
 
                     pct = pixel_count / (h * w) * 100
@@ -119,4 +124,5 @@ def segment_image(
             total_pct = cat_pixel_count / (h * w) * 100
             log.info(f"Category {cat_id} ({CAT_NAMES[cat_id]}): {total_pct:.1f}% coverage")
 
-    return segment_map, detected
+    log.info(f"Segmentation complete: {next_object_id - 1} objects detected")
+    return segment_map, object_map, detected

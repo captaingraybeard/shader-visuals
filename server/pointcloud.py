@@ -8,6 +8,7 @@ def build_point_cloud(
     image: Image.Image,
     depth: np.ndarray,
     segments: np.ndarray,
+    object_ids: np.ndarray | None = None,
     mode: str = "standard",
     stride: int = 1,
     quantize: bool = True,
@@ -21,10 +22,11 @@ def build_point_cloud(
     
     Returns (packed_bytes, point_count, format_info).
     
-    Quantized format (10 bytes/point):
+    Quantized format (11 bytes/point):
         position: 3 x int16 (6 bytes) — normalized to [-32767, 32767]
         color: 3 x uint8 (3 bytes)
-        segment: 1 x uint8 (1 byte)
+        segment: 1 x uint8 (1 byte) — category 0-5
+        object_id: 1 x uint8 (1 byte) — unique per mask instance
     
     Legacy format (20 bytes/point):
         position: 3 x float32 (12 bytes)
@@ -41,6 +43,12 @@ def build_point_cloud(
     if segments.shape != (h, w):
         segments = np.array(
             Image.fromarray(segments).resize((w, h), Image.NEAREST), dtype=np.uint8
+        )
+    if object_ids is None:
+        object_ids = np.zeros((h, w), dtype=np.uint8)
+    elif object_ids.shape != (h, w):
+        object_ids = np.array(
+            Image.fromarray(object_ids).resize((w, h), Image.NEAREST), dtype=np.uint8
         )
 
     if mode == "panorama":
@@ -82,12 +90,14 @@ def build_point_cloud(
         z = z[::stride, ::stride]
         img_arr = img_arr[::stride, ::stride]
         segments = segments[::stride, ::stride]
+        object_ids = object_ids[::stride, ::stride]
 
     sh, sw = x.shape
     point_count = sh * sw
     positions = np.stack([x, y, z], axis=-1).reshape(point_count, 3)
     colors = img_arr.reshape(point_count, 3)
     segs = segments.reshape(point_count)
+    obj_ids = object_ids.reshape(point_count)
 
     if quantize:
         # Quantized: int16[3] + uint8[3] + uint8 = 10 bytes/point
@@ -105,17 +115,21 @@ def build_point_cloud(
             ("pos", np.int16, (3,)),
             ("color", np.uint8, (3,)),
             ("segment", np.uint8),
+            ("object_id", np.uint8),
         ])
         packed = np.zeros(point_count, dtype=dt)
         packed["pos"] = quantized
         packed["color"] = colors
         packed["segment"] = segs
+        packed["object_id"] = obj_ids
 
+        num_objects = int(obj_ids.max()) if obj_ids.max() > 0 else 0
         format_info = {
             "format": "quantized",
-            "bytes_per_point": 10,
+            "bytes_per_point": 11,
             "pos_min": pos_min.tolist(),
             "pos_max": pos_max.tolist(),
+            "num_objects": num_objects,
         }
         return packed.tobytes(), point_count, format_info
     else:

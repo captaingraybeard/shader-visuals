@@ -54,7 +54,7 @@ async def run_pipeline(
     depth_future = loop.run_in_executor(None, estimate_depth, hi_res)
     seg_future = loop.run_in_executor(None, segment_image, hi_res, dynamic_prompts or None)
 
-    depth, (segments, detected) = await asyncio.gather(depth_future, seg_future)
+    depth, (segments, object_map, detected) = await asyncio.gather(depth_future, seg_future)
     timings["depth_ms"] = int((time.time() - t) * 1000)
     timings["segmentation_ms"] = timings["depth_ms"]  # ran in parallel
 
@@ -66,7 +66,7 @@ async def run_pipeline(
     t = time.time()
     projection = "equirectangular" if mode == "panorama" else "planar"
     packed_bytes, point_count, format_info = build_point_cloud(
-        hi_res, depth, segments, mode=mode, stride=stride, quantize=True,
+        hi_res, depth, segments, object_ids=object_map, mode=mode, stride=stride, quantize=True,
     )
     timings["pointcloud_ms"] = int((time.time() - t) * 1000)
 

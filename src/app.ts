@@ -321,12 +321,8 @@ export class App {
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
     const dpr = window.devicePixelRatio || 1;
 
-    const effectiveCoherence = this.coherence;
-
-    // Per-segment coherence: audio energy disrupts each segment's coherence
-    const sensitivity = 0.8; // how much audio disrupts coherence
-    const base = this.coherence;
-    const floor = base * 0.6; // at 100% coherence, segments never go below 60%
+    // Slider controls sensitivity: 0 = max audio disruption, 1 = no disruption (fully coherent)
+    const sensitivity = (1.0 - this.coherence) * 2.0; // slider=1 → 0 disruption, slider=0 → 2x disruption
     const be = this._bandEnergies;
     be[0] = audioData.u_band0 * 0.6 + audioData.u_band1 * 0.4;                              // cat 0: BASS_SUBJECT
     be[1] = audioData.u_band2 * 0.3 + audioData.u_band3 * 0.5 + audioData.u_band4 * 0.2;    // cat 1: MID_ORGANIC
@@ -335,7 +331,7 @@ export class App {
     be[4] = audioData.u_band3 * 0.3 + audioData.u_band4 * 0.4 + audioData.u_band5 * 0.3;    // cat 4: MID_STRUCTURE
     be[5] = audioData.u_band1 * 0.3 + audioData.u_band2 * 0.4 + audioData.u_band3 * 0.3;    // cat 5: LOW_AMBIENT
     const segCoherence = this._segCoherence;
-    for (let i = 0; i < 6; i++) segCoherence[i] = Math.max(floor, Math.min(1, base - be[i] * sensitivity));
+    for (let i = 0; i < 6; i++) segCoherence[i] = Math.max(0, Math.min(1, 1.0 - be[i] * sensitivity));
 
     // Update autonomous camera
     this.camera.update(dt, audioData.u_bass, audioData.u_mid, audioData.u_high, audioData.u_beat);
@@ -370,7 +366,7 @@ export class App {
         band5: audioData.u_band5,
         band6: audioData.u_band6,
         band7: audioData.u_band7,
-        coherence: effectiveCoherence,
+        coherence: this.coherence,
         segCoherence,
         pointScale,
         form: this.form,
@@ -385,17 +381,8 @@ export class App {
       });
     }
 
-    // Post-processing renders the scene via RenderPass + all effects
-    this.postprocess.render({
-      time,
-      bass: audioData.u_bass,
-      mid: audioData.u_mid,
-      high: audioData.u_high,
-      beat: audioData.u_beat,
-      coherence: effectiveCoherence,
-      demonTotal: audioData.demonTotal,
-      chakraTotal: audioData.chakraTotal,
-    });
+    // Direct render — no screen-space post-processing
+    this.threeScene.renderer.render(this.threeScene.scene, this.threeScene.camera);
   }
 
   // ── Debug overlay ──────────────────────────────────

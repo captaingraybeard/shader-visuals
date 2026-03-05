@@ -8,8 +8,10 @@ export interface PointCloudData {
   positions: Float32Array; // x, y, z per point (3 floats each)
   colors: Float32Array;    // r, g, b per point (3 floats each)
   segments: Float32Array;  // 1 float per point, segment ID normalized to 0-1
+  objectIds: Float32Array; // 1 float per point, unique object ID normalized to 0-1
   count: number;
   projection: ProjectionMode;
+  numObjects: number;      // total unique object count
 }
 
 /**
@@ -45,7 +47,7 @@ export function buildPointCloud(
     buildPlanar(positions, colors, segments, pixels, depthMap, segmentData, segNorm, w, h);
   }
 
-  return { positions, colors, segments, count, projection };
+  return { positions, colors, segments, objectIds: new Float32Array(count), count, projection, numObjects: 0 };
 }
 
 function buildPlanar(
