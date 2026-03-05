@@ -336,13 +336,14 @@ function makeUniforms(): Record<string, THREE.IUniform> {
 }
 
 /* ── Helper: build a Points mesh from PointCloudData ── */
-function buildPoints(data: PointCloudData): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } {
+function buildPoints(data: PointCloudData): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
   geometry.setAttribute('a_color', new THREE.Float32BufferAttribute(data.colors, 3));
   geometry.setAttribute('a_segment', new THREE.Float32BufferAttribute(data.segments, 1));
   geometry.setAttribute('a_objectId', new THREE.Float32BufferAttribute(data.objectIds, 1));
 
+  // Front layer: full displacement
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: VERT,
@@ -353,10 +354,30 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
     depthTest: true,
     blending: THREE.NormalBlending,
   });
+  material.uniforms.u_layerAtten.value = 1.0;
 
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false;
-  return { points, material, geometry };
+  points.renderOrder = 1; // render second (on top)
+
+  // Back layer: nearly anchored, shared geometry
+  const backMaterial = new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    uniforms: makeUniforms(),
+    transparent: true,
+    depthWrite: false,  // never occludes front layer
+    depthTest: true,
+    blending: THREE.NormalBlending,
+  });
+  backMaterial.uniforms.u_layerAtten.value = 0.05;
+
+  const backLayer = new THREE.Points(geometry, backMaterial);
+  backLayer.frustumCulled = false;
+  backLayer.renderOrder = 0; // render first (behind)
+
+  return { points, material, geometry, backLayer, backMaterial };
 }
 
 /* ── Dummy 1x1 texture for unbound sampler (prevents iOS shader failure) ── */
@@ -380,8 +401,8 @@ export class ThreeScene {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
 
-  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
-  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
+  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } | null = null;
+  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } | null = null;
   private crossfading = false;
   private crossfadeStart = 0;
   private readonly crossfadeDuration = 1500;
@@ -427,7 +448,9 @@ export class ThreeScene {
 
     this.current = buildPoints(data);
     this.current.material.uniforms.u_numObjects.value = data.numObjects || 0;
-    this.scene.add(this.current.points);
+    this.current.backMaterial.uniforms.u_numObjects.value = data.numObjects || 0;
+    this.scene.add(this.current.backLayer); // back first
+    this.scene.add(this.current.points);    // front on top
 
     // Initialize creature system
     if (!this.creatureSystem) {
@@ -435,9 +458,10 @@ export class ThreeScene {
     }
     this.creatureSystem.setPointCloud(data);
 
-    // Set texture size uniforms on the new material
+    // Set texture size uniforms on BOTH materials
     const [texW, texH] = this.creatureSystem.getTexSize();
     this.current.material.uniforms.u_texSize.value.set(texW, texH);
+    this.current.backMaterial.uniforms.u_texSize.value.set(texW, texH);
   }
 
   /**
@@ -463,14 +487,19 @@ export class ThreeScene {
     // Shader uses u_transition as alpha — prev fades out, current fades in.
     if (this.prev) {
       this.prev.points.visible = this.crossfading;
+      this.prev.backLayer.visible = this.crossfading;
       if (this.crossfading) {
         this.updateUniforms(this.prev.material, opts, 1.0 - crossT);
+        this.updateUniforms(this.prev.backMaterial, opts, 1.0 - crossT);
       }
     }
 
     if (this.current) {
       this.current.points.visible = true;
+      this.current.backLayer.visible = true;
       this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
+      this.updateUniforms(this.current.backMaterial, opts, this.crossfading ? crossT : 1.0);
+      this.current.backMaterial.uniforms.u_pointScale.value = opts.pointScale * 0.85;
     }
 
     // Crossfade complete — dispose prev
@@ -494,8 +523,10 @@ export class ThreeScene {
     this.disposePrev();
     if (this.current) {
       this.scene.remove(this.current.points);
+      this.scene.remove(this.current.backLayer);
       this.current.geometry.dispose();
       this.current.material.dispose();
+      this.current.backMaterial.dispose();
       this.current = null;
     }
     if (this.creatureSystem) {
@@ -513,11 +544,14 @@ export class ThreeScene {
 
     const active = this.creatureSystem.hasCreatures;
     const mat = this.current.material;
+    const backMat = this.current.backMaterial;
     mat.uniforms.u_creaturesActive.value = active ? 1.0 : 0.0;
+    backMat.uniforms.u_creaturesActive.value = active ? 1.0 : 0.0;
 
     if (active) {
       const tex = this.creatureSystem.getPositionTexture();
       mat.uniforms.u_positionTex.value = tex;
+      backMat.uniforms.u_positionTex.value = tex;
     }
   }
 
@@ -552,8 +586,10 @@ export class ThreeScene {
   private disposePrev(): void {
     if (this.prev) {
       this.scene.remove(this.prev.points);
+      this.scene.remove(this.prev.backLayer);
       this.prev.geometry.dispose();
       this.prev.material.dispose();
+      this.prev.backMaterial.dispose();
       this.prev = null;
     }
   }
