@@ -174,21 +174,14 @@ void main() {
   pos += dir * beatWave;
 
   // ── Spotlight system: 3 effects on segmented objects ──
-  // Use real object IDs when available, spatial hash fallback when not
   float objId = a_objectId;
-  float hasRealObjects = step(0.001, u_numObjects);
-  // Spatial grid hash for fallback (when server hasn't sent object IDs yet)
-  vec3 gridCell = floor(position * 1.2);
-  float spatialId = fract(dot(gridCell, vec3(127.1, 311.7, 74.7)) * 0.00123);
-  // Use real objectId if available, otherwise spatial hash
-  float effectiveId = mix(spatialId, objId, hasRealObjects);
-  float isObject = mix(1.0, step(0.001, objId), hasRealObjects); // spatial: all active, real: skip bg
+  float isObject = step(0.001, objId); // 0 for background, 1 for real objects
   float spotCycle = u_spotPhase * 0.1;
 
-  // Cheap hashes per object
-  float oh1 = fract(effectiveId * 127.1 + 0.7);
-  float oh2 = fract(effectiveId * 269.3 + 0.3);
-  float oh3 = fract(effectiveId * 419.7 + 0.1);
+  // Hashes per object for effect selection
+  float oh1 = fract(objId * 127.1 + 0.7);
+  float oh2 = fract(objId * 269.3 + 0.3);
+  float oh3 = fract(objId * 419.7 + 0.1);
 
   // Effect 1: SCALE/GROW
   float scaleDist = abs(fract(oh1 + spotCycle) - 0.5) * 2.0;
@@ -200,7 +193,7 @@ void main() {
   float floatDist = abs(fract(oh2 + spotCycle * 0.8 + 0.33) - 0.5) * 2.0;
   float floatActive = smoothstep(0.22, 0.0, floatDist) * isObject;
   float liftHeight = floatActive * energy * 2.5 * displaceScale; // stronger lift
-  pos.y += liftHeight * (0.5 + sin(t * 2.0 + effectiveId * 50.0) * 0.5);
+  pos.y += liftHeight * (0.5 + sin(t * 2.0 + objId * 50.0) * 0.5);
   pos.x += sin(t * 1.2 + oh2 * 6.28) * floatActive * 0.7 * displaceScale;
   pos.z += cos(t * 0.9 + oh2 * 3.14) * floatActive * 0.5 * displaceScale;
 
