@@ -41,6 +41,7 @@ uniform float u_highlightCat;
 uniform float u_projMode;
 uniform float u_spotPhase; // cycles over time, selects which sub-objects are "lit up"
 uniform float u_numObjects; // total unique objects from segmentation
+uniform float u_layerAtten; // 1.0 = front (full fx), 0.0 = back (anchored)
 
 // Chakra system uniforms
 uniform float u_chakra[7];     // root, sacral, solar, heart, throat, thirdEye, crown
@@ -176,7 +177,7 @@ void main() {
     + crownBoost
     - demonForce * 0.1
   , 0.0, 1.0);
-  float displaceScale = 1.0 - segCoh; // 0 at full coherence, 1 at full chaos
+  float displaceScale = (1.0 - segCoh) * u_layerAtten; // 0 at full coherence, attenuated by layer depth
 
   // ── Per-segment chakra healing displacement ──
   vec3 chakraHealDisp = vec3(0.0);
@@ -461,6 +462,7 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_projMode: { value: 0 },
     u_spotPhase: { value: 0 },
     u_numObjects: { value: 0 },
+    u_layerAtten: { value: 1.0 },
     u_chakra: { value: [0, 0, 0, 0, 0, 0, 0] },
     u_demonsLow: { value: 0 },
     u_demonsHigh: { value: 0 },
@@ -515,8 +517,8 @@ export class ThreeScene {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
 
-  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
-  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
+  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer?: THREE.Points; backMaterial?: THREE.ShaderMaterial } | null = null;
+  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer?: THREE.Points; backMaterial?: THREE.ShaderMaterial } | null = null;
   private crossfading = false;
   private crossfadeStart = 0;
   private readonly crossfadeDuration = 1500;
@@ -562,6 +564,20 @@ export class ThreeScene {
 
     this.current = buildPoints(data);
     this.current.material.uniforms.u_numObjects.value = data.numObjects || 0;
+    this.current.material.uniforms.u_layerAtten.value = 1.0; // front layer: full effects
+
+    // Back layer: shared geometry, cloned material with low displacement
+    const backMaterial = this.current.material.clone();
+    backMaterial.uniforms = makeUniforms();
+    backMaterial.uniforms.u_layerAtten.value = 0.05; // nearly anchored
+    backMaterial.uniforms.u_numObjects.value = data.numObjects || 0;
+    backMaterial.depthWrite = true;
+    const backLayer = new THREE.Points(this.current.geometry, backMaterial);
+    backLayer.frustumCulled = false;
+    backLayer.renderOrder = -1; // render first (behind front layer)
+    this.current.backLayer = backLayer;
+    this.current.backMaterial = backMaterial;
+    this.scene.add(backLayer);
     this.scene.add(this.current.points);
 
     // Initialize creature system
@@ -598,14 +614,28 @@ export class ThreeScene {
     // Shader uses u_transition as alpha — prev fades out, current fades in.
     if (this.prev) {
       this.prev.points.visible = this.crossfading;
+      if (this.prev.backLayer) this.prev.backLayer.visible = this.crossfading;
       if (this.crossfading) {
         this.updateUniforms(this.prev.material, opts, 1.0 - crossT);
+        if (this.prev.backMaterial) {
+          const savedAtten = this.prev.backMaterial.uniforms.u_layerAtten.value;
+          this.updateUniforms(this.prev.backMaterial, opts, 1.0 - crossT);
+          this.prev.backMaterial.uniforms.u_layerAtten.value = savedAtten;
+        }
       }
     }
 
     if (this.current) {
       this.current.points.visible = true;
       this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
+      // Sync back layer uniforms (keeps its own u_layerAtten)
+      if (this.current.backMaterial) {
+        const savedAtten = this.current.backMaterial.uniforms.u_layerAtten.value;
+        this.updateUniforms(this.current.backMaterial, opts, this.crossfading ? crossT : 1.0);
+        this.current.backMaterial.uniforms.u_layerAtten.value = savedAtten;
+        // Back layer: slightly smaller points
+        this.current.backMaterial.uniforms.u_pointScale.value = opts.pointScale * 0.8;
+      }
     }
 
     // Crossfade complete — dispose prev
@@ -687,6 +717,10 @@ export class ThreeScene {
   private disposePrev(): void {
     if (this.prev) {
       this.scene.remove(this.prev.points);
+      if (this.prev.backLayer) {
+        this.scene.remove(this.prev.backLayer);
+        this.prev.backMaterial?.dispose();
+      }
       this.prev.geometry.dispose();
       this.prev.material.dispose();
       this.prev = null;
