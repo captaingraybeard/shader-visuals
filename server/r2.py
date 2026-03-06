@@ -105,3 +105,46 @@ def upload_image(data: bytes, gen_id: str, name: str) -> str:
         )
     log.info(f"Uploaded image to R2: {key}")
     return url
+
+
+def upload_json(data: dict, gen_id: str, name: str) -> str:
+    """Upload a JSON file to R2. Returns public URL."""
+    import json
+    client = _get_client()
+    key = f"generations/{gen_id}/{name}"
+    body = json.dumps(data, indent=2).encode()
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=body,
+        ContentType="application/json",
+        CacheControl="public, max-age=86400",
+    )
+    url = f"https://{R2_PUBLIC_DOMAIN}/{key}" if R2_PUBLIC_DOMAIN else key
+    log.info(f"Uploaded JSON to R2: {key}")
+    return url
+
+
+def append_to_index(gen_summary: dict) -> None:
+    """Append a generation summary to the R2 index. Downloads existing index, appends, re-uploads."""
+    import json
+    client = _get_client()
+    key = "generations/index.json"
+
+    # Try to fetch existing index
+    try:
+        resp = client.get_object(Bucket=R2_BUCKET, Key=key)
+        index = json.loads(resp["Body"].read())
+    except Exception:
+        index = []
+
+    index.append(gen_summary)
+
+    client.put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=json.dumps(index, indent=2).encode(),
+        ContentType="application/json",
+        CacheControl="public, max-age=60",  # short cache so new entries show up
+    )
+    log.info(f"Updated R2 index: {len(index)} generations")

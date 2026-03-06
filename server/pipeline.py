@@ -12,7 +12,7 @@ from .depth import estimate_depth
 from .segment import segment_image
 from .pointcloud import build_point_cloud
 from .storage import save_generation
-from .r2 import is_r2_configured, upload_pointcloud, upload_image
+from .r2 import is_r2_configured, upload_pointcloud, upload_image, upload_json, append_to_index
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +124,23 @@ async def run_pipeline(
             img_buf = BytesIO()
             image.save(img_buf, format="PNG")
             metadata["image_url"] = upload_image(img_buf.getvalue(), gen_id, "image.png")
+            # Upload full metadata JSON
+            upload_json(metadata, gen_id, "metadata.json")
+
+            # Append summary to index
+            append_to_index({
+                "id": gen_id,
+                "prompt": metadata.get("prompt", ""),
+                "vibe": metadata.get("vibe", ""),
+                "mode": metadata.get("mode", ""),
+                "point_count": metadata.get("point_count", 0),
+                "num_objects": format_info.get("num_objects", 0),
+                "pointcloud_url": metadata.get("pointcloud_url", ""),
+                "image_url": metadata.get("image_url", ""),
+                "segments_url": metadata.get("segments_url", ""),
+                "objects_url": metadata.get("objects_url", ""),
+                "timing": metadata.get("timing", {}),
+            })
         except Exception as e:
             log.warning(f"Failed to upload visualization images: {e}")
 
