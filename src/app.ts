@@ -6,6 +6,9 @@ import { ThreePostProcess } from './three-postprocess';
 import { UI } from './ui';
 import type { ProjectionMode } from './pointcloud';
 import { generateFromServer } from './server';
+import { addControl, controls } from './control-registry';
+import { initControlUI } from './control-ui';
+import { updateControlUniforms } from './control-uniforms';
 
 export class App {
   private audio: AudioEngine;
@@ -71,6 +74,12 @@ export class App {
     this.ui.init();
     this.wireUI();
 
+    // Init dynamic control UI
+    initControlUI();
+    
+    // Register default animation controls
+    this.initDefaultControls();
+
     // Load saved values
     this.panoramaMode = localStorage.getItem('shader-visuals-panorama') === 'true';
     const savedIntensity = localStorage.getItem('shader-visuals-intensity');
@@ -90,6 +99,23 @@ export class App {
     this.loop();
 
     this.registerSW();
+  }
+
+  // ── Default animation controls ────────────────────
+
+  private initDefaultControls(): void {
+    // Explosion effect controls
+    addControl('explosionIntensity', 0, 0, 2, 0.01, 'Explosion Intensity', 'Effects');
+    addControl('explosionRadius', 0.5, 0.1, 2, 0.01, 'Explosion Radius', 'Effects');
+    addControl('turbulence', 0.3, 0, 1, 0.01, 'Turbulence', 'Effects');
+    
+    // Displacement controls  
+    addControl('displacementScale', 1, 0, 3, 0.01, 'Displacement Scale', 'Motion');
+    addControl('waveSpeed', 1, 0.1, 5, 0.1, 'Wave Speed', 'Motion');
+    
+    // Color controls
+    addControl('saturationBoost', 0, -0.5, 1, 0.01, 'Saturation Boost', 'Color');
+    addControl('glowIntensity', 0, 0, 1, 0.01, 'Glow Intensity', 'Color');
   }
 
   // ── UI wiring ─────────────────────────────────────
@@ -321,8 +347,17 @@ export class App {
     const aspect = canvas.clientWidth / canvas.clientHeight || 1;
     const dpr = window.devicePixelRatio || 1;
 
+    // Get dynamic control values
+    const displacementScale = controls.get('displacementScale', 1);
+    const waveSpeed = controls.get('waveSpeed', 1);
+    const explosionIntensity = controls.get('explosionIntensity', 0);
+    
+    // Apply displacement scale to sensitivity
     // Slider controls sensitivity: 0 = max audio disruption, 1 = no disruption (fully coherent)
-    const sensitivity = (1.0 - this.coherence) * 2.0; // slider=1 → 0 disruption, slider=0 → 2x disruption
+    const sensitivity = (1.0 - this.coherence) * 2.0 * displacementScale; // slider=1 → 0 disruption, slider=0 → 2x disruption
+    
+    // Explosion intensity adds to beat when triggered
+    const effectiveBeat = Math.min(1, audioData.u_beat + explosionIntensity * 0.5);
     const be = this._bandEnergies;
     be[0] = audioData.u_band0 * 0.6 + audioData.u_band1 * 0.4;                              // cat 0: BASS_SUBJECT
     be[1] = audioData.u_band2 * 0.3 + audioData.u_band3 * 0.5 + audioData.u_band4 * 0.2;    // cat 1: MID_ORGANIC
@@ -353,11 +388,11 @@ export class App {
       this.threeScene.update({
         projection,
         view,
-        time,
+        time: time * waveSpeed,
         bass: audioData.u_bass,
         mid: audioData.u_mid,
         high: audioData.u_high,
-        beat: audioData.u_beat,
+        beat: effectiveBeat,
         band0: audioData.u_band0,
         band1: audioData.u_band1,
         band2: audioData.u_band2,
