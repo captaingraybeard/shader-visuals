@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { AudioEngine, TONE_PRESETS } from './audio';
 import type { AudioData } from './audio';
 import { AutoCamera } from './camera-auto';
@@ -9,6 +10,7 @@ import { generateFromServer } from './server';
 import { addControl, controls } from './control-registry';
 import { initControlUI } from './control-ui';
 import { updateControlUniforms } from './control-uniforms';
+import { getExplosionEffect } from './effects/explosion';
 
 export class App {
   private audio: AudioEngine;
@@ -104,18 +106,18 @@ export class App {
   // ── Default animation controls ────────────────────
 
   private initDefaultControls(): void {
-    // Explosion effect controls
-    addControl('explosionIntensity', 0, 0, 2, 0.01, 'Explosion Intensity', 'Effects');
-    addControl('explosionRadius', 0.5, 0.1, 2, 0.01, 'Explosion Radius', 'Effects');
-    addControl('turbulence', 0.3, 0, 1, 0.01, 'Turbulence', 'Effects');
-    
-    // Displacement controls  
+    // Explosion controls are registered by the explosion effect module
+    // Additional displacement controls  
     addControl('displacementScale', 1, 0, 3, 0.01, 'Displacement Scale', 'Motion');
     addControl('waveSpeed', 1, 0.1, 5, 0.1, 'Wave Speed', 'Motion');
     
     // Color controls
     addControl('saturationBoost', 0, -0.5, 1, 0.01, 'Saturation Boost', 'Color');
     addControl('glowIntensity', 0, 0, 1, 0.01, 'Glow Intensity', 'Color');
+    
+    // Initialize explosion effect and attach to scene
+    const explosion = getExplosionEffect();
+    explosion.attach(this.threeScene.scene);
   }
 
   // ── UI wiring ─────────────────────────────────────
@@ -415,6 +417,11 @@ export class App {
         demonsHigh: audioData.demonsHigh,
       });
     }
+
+    // Update explosion effect
+    const explosion = getExplosionEffect();
+    const resolution = new THREE.Vector2(canvas.width, canvas.height);
+    explosion.update(time, effectiveBeat, resolution, this.threeScene.camera);
 
     // Direct render — no screen-space post-processing
     this.threeScene.renderer.render(this.threeScene.scene, this.threeScene.camera);
