@@ -508,10 +508,12 @@ export class ThreeScene {
     }
     this.creatureSystem.setPointCloud(data);
 
-    // Set texture size uniforms on BOTH materials
-    const [texW, texH] = this.creatureSystem.getTexSize();
-    this.current.material.uniforms.u_texSize.value.set(texW, texH);
-    this.current.backMaterial.uniforms.u_texSize.value.set(texW, texH);
+    // Set texture size uniforms on BOTH materials (only if creature system is active)
+    if (!this.creatureSystem.disabled) {
+      const [texW, texH] = this.creatureSystem.getTexSize();
+      this.current.material.uniforms.u_texSize.value.set(texW, texH);
+      this.current.backMaterial.uniforms.u_texSize.value.set(texW, texH);
+    }
   }
 
   /**
@@ -588,7 +590,7 @@ export class ThreeScene {
 
   /** Update creature system — call each frame before update() */
   updateCreatures(dt: number, audioData: AudioData, time: number): void {
-    if (!this.creatureSystem || !this.current) return;
+    if (!this.creatureSystem || !this.current || this.creatureSystem.disabled) return;
 
     this.creatureSystem.update(dt, audioData, time);
 

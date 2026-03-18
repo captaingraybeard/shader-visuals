@@ -195,6 +195,32 @@ void main() {
 }
 `;
 
+/* ── Mobile / capability detection ── */
+function isLowEndMobile(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  // Detect mobile devices
+  const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  if (!isMobile) return false;
+  // Heuristic: low-end if few logical cores or low memory
+  const cores = navigator.hardwareConcurrency || 0;
+  const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory || 0;
+  // If we can detect <=4 cores or <=4GB RAM on mobile, treat as low-end
+  if (cores > 0 && cores <= 4) return true;
+  if (memory > 0 && memory <= 4) return true;
+  // Fallback: all mobile devices are suspect for float textures
+  return true;
+}
+
+function supportsFloatTextures(renderer: THREE.WebGLRenderer): boolean {
+  const gl = renderer.getContext();
+  const hasFloat = gl.getExtension('OES_texture_float');
+  const hasHalfFloat = gl.getExtension('OES_texture_half_float');
+  // WebGL2 contexts support float textures natively but may still fail on render targets
+  const isWebGL2 = gl instanceof WebGL2RenderingContext;
+  return isWebGL2 || hasFloat !== null || hasHalfFloat !== null;
+}
+
 /* ── CreatureSystem class ── */
 export class CreatureSystem {
   private renderer: THREE.WebGLRenderer;
@@ -213,13 +239,31 @@ export class CreatureSystem {
 
   // State
   private _hasCreatures = false;
+  private _disabled = false;
+
+  get disabled(): boolean {
+    return this._disabled;
+  }
 
   constructor(renderer: THREE.WebGLRenderer, maxPoints: number) {
     this.renderer = renderer;
     this.maxPoints = maxPoints;
+
+    // Skip entirely on low-end mobile or missing float texture support
+    if (isLowEndMobile()) {
+      console.warn('CreatureSystem: disabled on low-end mobile device');
+      this._disabled = true;
+      return;
+    }
+    if (!supportsFloatTextures(renderer)) {
+      console.warn('CreatureSystem: disabled — GPU lacks float texture support');
+      this._disabled = true;
+      return;
+    }
   }
 
   setPointCloud(data: PointCloudData): void {
+    if (this._disabled) return;
     this.dispose();
     this.pointCount = data.count;
     const [texW, texH] = computeTexSize(data.count);
@@ -295,6 +339,16 @@ export class CreatureSystem {
     const error = this.gpuCompute.init();
     if (error !== null) {
       console.error('GPUComputationRenderer init error:', error);
+      // Clean up and disable — GPU can't run the compute shaders
+      this.gpuCompute = null;
+      this.positionVariable = null;
+      this.velocityVariable = null;
+      if (this.homeTexture) {
+        this.homeTexture.dispose();
+        this.homeTexture = null;
+      }
+      this._disabled = true;
+      return;
     }
 
     this.attractors = [];
@@ -302,6 +356,7 @@ export class CreatureSystem {
   }
 
   update(dt: number, audioData: AudioData, time: number): void {
+    if (this._disabled) return;
     if (!this.gpuCompute || !this.positionVariable || !this.velocityVariable) return;
 
     // Clamp dt to avoid huge jumps
