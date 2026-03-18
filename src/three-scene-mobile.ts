@@ -4,6 +4,11 @@
 
 import * as THREE from 'three';
 import type { PointCloudData } from './pointcloud';
+import { controls } from './control-registry';
+import {
+  STYLE_FRAG_FUNCTIONS_MOBILE, STYLE_FRAG_MAIN_MOBILE,
+  STYLE_VERT_MAIN_MOBILE,
+} from './particle-styles';
 
 /* ── Simplified Vertex Shader ── */
 const VERT_MOBILE = /* glsl */ `
@@ -22,6 +27,7 @@ uniform float u_coherence;
 uniform float u_pointScale;
 uniform float u_transition;
 uniform float u_projMode;
+uniform float u_particleStyle;
 
 out vec3 v_color;
 out float v_alpha;
@@ -94,29 +100,29 @@ void main() {
   float ptSize = u_pointScale * (0.6 + energy * 0.4) * (0.5 + depthFactor);
   gl_PointSize = max(1.0, ptSize);
 
+  // Particle style point size adjustments (mobile)
+${STYLE_VERT_MAIN_MOBILE}
+
   v_color = a_color + colorTint * displaceScale;
   v_color += vec3(0.03, 0.015, 0.04) * u_beat * displaceScale;
   v_alpha = u_transition;
 }
 `;
 
-/* ── Simplified Fragment Shader ── */
+/* ── Simplified Fragment Shader — with particle style system ── */
 const FRAG_MOBILE = /* glsl */ `
 precision mediump float;
 
 in vec3 v_color;
 in float v_alpha;
 
+uniform float u_particleStyle;
+
 out vec4 fragColor;
 
-void main() {
-  // Simple circular point — no coherence-based shape morphing
-  float dist = length(gl_PointCoord - 0.5);
-  if (dist > 0.5) discard;
-  
-  float edge = 1.0 - smoothstep(0.35, 0.5, dist);
-  fragColor = vec4(v_color * edge, v_alpha * edge);
-}
+${STYLE_FRAG_FUNCTIONS_MOBILE}
+
+${STYLE_FRAG_MAIN_MOBILE}
 `;
 
 /* ── Mobile render options (simplified) ── */
@@ -145,6 +151,7 @@ function makeMobileUniforms(): Record<string, THREE.IUniform> {
     u_pointScale: { value: 1 },
     u_transition: { value: 1 },
     u_projMode: { value: 0 },
+    u_particleStyle: { value: 0 },
   };
 }
 
@@ -319,6 +326,7 @@ export class ThreeSceneMobile {
     u.u_pointScale.value = opts.pointScale;
     u.u_transition.value = transition;
     u.u_projMode.value = opts.projMode;
+    u.u_particleStyle.value = controls.get('particleStyle', 0);
   }
 
   private disposePrev(): void {
