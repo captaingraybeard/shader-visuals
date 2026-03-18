@@ -35,6 +35,7 @@ export class App {
   private _bandEnergies = new Float64Array(6);
   private _segCoherence = [0, 0, 0, 0, 0, 0];
   private _chakra = [0, 0, 0, 0, 0, 0, 0];
+  private _resolution = new THREE.Vector2();
 
   // Journey mode
   private journeyMode = false;
@@ -462,13 +463,23 @@ export class App {
       });
     }
 
-    // Update explosion effect
+    // Update explosion effect (reuse vector to avoid GC pressure)
     const explosion = getExplosionEffect();
-    const resolution = new THREE.Vector2(canvas.width, canvas.height);
-    explosion.update(time, effectiveBeat, resolution, this.threeScene.camera);
+    this._resolution.set(canvas.width, canvas.height);
+    explosion.update(time, effectiveBeat, this._resolution, this.threeScene.camera);
 
-    // Direct render — no screen-space post-processing
-    this.threeScene.renderer.render(this.threeScene.scene, this.threeScene.camera);
+    // Render through post-processing pipeline (merged single-pass)
+    this.postprocess.render({
+      time,
+      bass: audioData.u_bass,
+      mid: audioData.u_mid,
+      high: audioData.u_high,
+      beat: effectiveBeat,
+      coherence: this.coherence,
+      demonTotal: audioData.demonsLow + audioData.demonsHigh,
+      chakraTotal: audioData.chakraRoot + audioData.chakraSacral + audioData.chakraSolar +
+        audioData.chakraHeart + audioData.chakraThroat + audioData.chakraThirdEye + audioData.chakraCrown,
+    });
   }
 
   // ── Debug overlay ──────────────────────────────────

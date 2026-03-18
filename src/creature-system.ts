@@ -240,6 +240,8 @@ export class CreatureSystem {
   // State
   private _hasCreatures = false;
   private _disabled = false;
+  private frameCounter = 0;
+  private readonly computeInterval = 2; // run compute every N frames
 
   get disabled(): boolean {
     return this._disabled;
@@ -362,11 +364,10 @@ export class CreatureSystem {
     // Clamp dt to avoid huge jumps
     const clampedDt = Math.min(dt, 0.1);
 
-    // Update attractor lifetimes
+    // Update attractor lifetimes (cheap CPU work — always run)
     this.spawnCooldown = Math.max(0, this.spawnCooldown - clampedDt);
     for (let i = this.attractors.length - 1; i >= 0; i--) {
       this.attractors[i].lifetime -= clampedDt;
-      // Orbit around spawn point
       const a = this.attractors[i];
       const orbitAngle = time * a.orbitSpeed + a.phase;
       a.position.copy(a.spawnPos);
@@ -381,15 +382,21 @@ export class CreatureSystem {
     // Spawn new attractors on beat
     this.maybeSpawnAttractor(audioData);
 
-    // Update _hasCreatures
     this._hasCreatures = this.attractors.length > 0;
+
+    // Throttle GPU compute — run every N frames (positions interpolate smoothly)
+    this.frameCounter++;
+    if (this.frameCounter % this.computeInterval !== 0) return;
+
+    // Accumulate dt for skipped frames
+    const accDt = clampedDt * this.computeInterval;
 
     // Update uniforms
     const posU = this.positionVariable.material.uniforms;
     const velU = this.velocityVariable.material.uniforms;
 
     for (const u of [posU, velU]) {
-      u['u_dt'].value = clampedDt;
+      u['u_dt'].value = accDt;
       u['u_time'].value = time;
       u['u_attractorCount'].value = this.attractors.length;
       u['u_band0'].value = audioData.u_band0;
@@ -413,7 +420,6 @@ export class CreatureSystem {
       }
     }
 
-    // Set velocity texture reference for position shader
     posU['u_velTex'].value = this.gpuCompute.getCurrentRenderTarget(this.velocityVariable).texture;
 
     // Run compute

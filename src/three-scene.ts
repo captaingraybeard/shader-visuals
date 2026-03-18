@@ -1,5 +1,5 @@
-// Three.js scene manager — replaces renderer-points.ts
-// Point cloud rendering with custom ShaderMaterial and crossfade
+// Three.js scene manager — optimized single-layer rendering
+// Point cloud with custom ShaderMaterial and crossfade
 
 import * as THREE from 'three';
 import type { PointCloudData } from './pointcloud';
@@ -90,9 +90,8 @@ uniform float u_highlightCat;
 uniform float u_projMode;
 uniform float u_spotPhase;
 uniform float u_numObjects;
-uniform float u_layerAtten;
 
-// Chakra/demon uniforms (kept for compatibility, lightweight usage)
+// Chakra/demon uniforms
 uniform float u_chakra[7];
 uniform float u_demonsLow;
 uniform float u_demonsHigh;
@@ -165,19 +164,20 @@ ${snippet}
   // Apply displacement
   pos += displacement * invMass * displaceScale;
 
-  // Form scatter
+  // Form scatter (reduced from 3 sin to 2)
+  float formScatter = u_form * 0.04 * displaceScale;
   pos += vec3(
-    sin(pos.x * 7.0 + pos.y * 3.0) * u_form * 0.04,
-    sin(pos.y * 6.0 + pos.z * 4.0) * u_form * 0.04,
-    sin(pos.z * 5.0 + pos.x * 3.5) * u_form * 0.04
-  ) * displaceScale;
+    sin(pos.x * 7.0 + pos.y * 3.0) * formScatter,
+    sin(pos.y * 6.0 + pos.z * 4.0) * formScatter,
+    sin(pos.z * 5.0 + pos.x * 3.5) * formScatter
+  );
 
   // Depth-weighted coherence for scatter
   float depthProtection = depthFactor * 0.4;
   float localCoherence = clamp(segCoh + depthProtection * (1.0 - segCoh), 0.0, 1.0);
   float localChaos = 1.0 - localCoherence;
 
-  // Chaos scatter
+  // Chaos scatter (3 trig ops — kept, these are cheap on GPU)
   float chaosFreq = 2.0 + energy * 3.0;
   vec3 scatter = vec3(
     sin(pos.x * chaosFreq + pos.y * 1.3 + t * 0.8),
@@ -193,24 +193,24 @@ ${snippet}
 
   // ── Spotlight system: 3 effects on segmented objects ──
   float objId = a_objectId;
-  float isObject = step(0.001, objId); // 0 for background, 1 for real objects
+  float isObject = step(0.001, objId);
   float spotCycle = u_spotPhase * 0.1;
 
-  // Hashes per object for effect selection
+  // Hashes per object
   float oh1 = fract(objId * 127.1 + 0.7);
   float oh2 = fract(objId * 269.3 + 0.3);
   float oh3 = fract(objId * 419.7 + 0.1);
 
   // Effect 1: SCALE/GROW
   float scaleDist = abs(fract(oh1 + spotCycle) - 0.5) * 2.0;
-  float scaleActive = smoothstep(0.25, 0.0, scaleDist) * isObject; // wider selection (~25%)
-  float growFactor = 1.0 + scaleActive * energy * 6.0 * displaceScale; // stronger grow
+  float scaleActive = smoothstep(0.25, 0.0, scaleDist) * isObject;
+  float growFactor = 1.0 + scaleActive * energy * 6.0 * displaceScale;
   pos = position + (pos - position) * growFactor;
 
   // Effect 2: DETACH/FLOAT
   float floatDist = abs(fract(oh2 + spotCycle * 0.8 + 0.33) - 0.5) * 2.0;
   float floatActive = smoothstep(0.22, 0.0, floatDist) * isObject;
-  float liftHeight = floatActive * energy * 2.5 * displaceScale; // stronger lift
+  float liftHeight = floatActive * energy * 2.5 * displaceScale;
   pos.y += liftHeight * (0.5 + sin(t * 2.0 + objId * 50.0) * 0.5);
   pos.x += sin(t * 1.2 + oh2 * 6.28) * floatActive * 0.7 * displaceScale;
   pos.z += cos(t * 0.9 + oh2 * 3.14) * floatActive * 0.5 * displaceScale;
@@ -234,7 +234,7 @@ ${snippet}
   float coherenceBoost = localCoherence * localCoherence;
   float massSize = 1.0 + clamp(baseMass - 1.0, 0.0, 4.0) * 0.15;
   float ptSize = (baseSize + coherenceBoost + sizeBoost * displaceScale * invMass) * massSize;
-  ptSize *= (1.0 + scaleActive * energy * 5.0 * displaceScale); // match grow displacement so object feels solid
+  ptSize *= (1.0 + scaleActive * energy * 5.0 * displaceScale);
   ptSize *= (0.4 + depthFactor * 1.2);
   gl_PointSize = max(1.0, ptSize);
 
@@ -288,7 +288,7 @@ ${STYLE_FRAG_FUNCTIONS}
 ${STYLE_FRAG_MAIN}
 `;
 
-/* ── Render options (same interface as PointCloudRenderer.render) ── */
+/* ── Render options ── */
 export interface RenderOpts {
   projection: Float32Array;
   view: Float32Array;
@@ -316,6 +316,12 @@ export interface RenderOpts {
   demonsHigh: number;
 }
 
+/* ── Dummy 1x1 texture for unbound sampler (prevents iOS shader failure) ── */
+const _dummyTexture = new THREE.DataTexture(
+  new Float32Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.FloatType,
+);
+_dummyTexture.needsUpdate = true;
+
 /* ── Helper: create uniforms object ── */
 function makeUniforms(): Record<string, THREE.IUniform> {
   return {
@@ -341,7 +347,6 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_projMode: { value: 0 },
     u_spotPhase: { value: 0 },
     u_numObjects: { value: 0 },
-    u_layerAtten: { value: 1.0 },
     u_chakra: { value: [0, 0, 0, 0, 0, 0, 0] },
     u_demonsLow: { value: 0 },
     u_demonsHigh: { value: 0 },
@@ -353,7 +358,7 @@ function makeUniforms(): Record<string, THREE.IUniform> {
 }
 
 /* ── Helper: build a Points mesh from PointCloudData ── */
-function buildPoints(data: PointCloudData, animationSnippet?: string): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } {
+function buildPoints(data: PointCloudData, animationSnippet?: string): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } {
   const vertexShader = buildVertexShader(animationSnippet);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
@@ -361,7 +366,6 @@ function buildPoints(data: PointCloudData, animationSnippet?: string): { points:
   geometry.setAttribute('a_segment', new THREE.Float32BufferAttribute(data.segments, 1));
   geometry.setAttribute('a_objectId', new THREE.Float32BufferAttribute(data.objectIds, 1));
 
-  // Front layer: full displacement
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: vertexShader,
@@ -372,55 +376,29 @@ function buildPoints(data: PointCloudData, animationSnippet?: string): { points:
     depthTest: true,
     blending: THREE.NormalBlending,
   });
-  material.uniforms.u_layerAtten.value = 1.0;
 
   const points = new THREE.Points(geometry, material);
   points.frustumCulled = false;
-  points.renderOrder = 1; // render second (on top)
 
-  // Back layer: nearly anchored, shared geometry
-  const backMaterial = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
-    vertexShader: vertexShader,
-    fragmentShader: FRAG,
-    uniforms: makeUniforms(),
-    transparent: true,
-    depthWrite: false,  // never occludes front layer
-    depthTest: true,
-    blending: THREE.NormalBlending,
-  });
-  backMaterial.uniforms.u_layerAtten.value = 0.01; // nearly frozen
-
-  const backLayer = new THREE.Points(geometry, backMaterial);
-  backLayer.frustumCulled = false;
-  backLayer.renderOrder = 0; // render first (behind)
-
-  return { points, material, geometry, backLayer, backMaterial };
+  return { points, material, geometry };
 }
-
-/* ── Dummy 1x1 texture for unbound sampler (prevents iOS shader failure) ── */
-const _dummyTexture = new THREE.DataTexture(
-  new Float32Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.FloatType,
-);
-_dummyTexture.needsUpdate = true;
 
 /* ── Helper: reusable Matrix4 instances to avoid per-frame allocation ── */
 const _tmpProjection = new THREE.Matrix4();
 const _tmpView = new THREE.Matrix4();
 
 /* ── ThreeScene ──
- * Scene-graph-only: manages point cloud meshes and uniforms.
+ * Scene-graph-only: manages point cloud mesh and uniforms.
  * Does NOT render — the EffectComposer's RenderPass handles that.
- * Both current and prev clouds are visible simultaneously during crossfade,
- * blended via u_transition alpha in the shader.
+ * Single layer rendering (back layer removed for 2x perf).
  */
 export class ThreeScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
 
-  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } | null = null;
-  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } | null = null;
+  private current: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
+  private prev: { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry } | null = null;
   private crossfading = false;
   private crossfadeStart = 0;
   private readonly crossfadeDuration = 1500;
@@ -435,15 +413,11 @@ export class ThreeScene {
       alpha: false,
       antialias: false,
     });
-    // Let EffectComposer handle clearing
     this.renderer.autoClear = true;
-
-    // Log shader compilation errors (crucial for iOS debugging)
     this.renderer.debug.checkShaderErrors = true;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
-    // We set matrices manually from camera-auto.ts
     this.camera.matrixAutoUpdate = false;
     this.camera.matrixWorldAutoUpdate = false;
 
@@ -458,28 +432,19 @@ export class ThreeScene {
     return this.current !== null;
   }
 
-  /** Hot-swap animation behavior without regenerating the scene.
-   *  Pass null to revert to default animation. */
+  /** Hot-swap animation behavior without regenerating the scene. */
   setAnimationSnippet(snippet: string | null): void {
     this.animationSnippet = snippet;
     if (!this.current) return;
 
     const vertexShader = buildVertexShader(snippet ?? undefined);
-    const newFrontMat = this.current.material.clone();
-    newFrontMat.vertexShader = vertexShader;
-    newFrontMat.needsUpdate = true;
+    const newMat = this.current.material.clone();
+    newMat.vertexShader = vertexShader;
+    newMat.needsUpdate = true;
 
-    const newBackMat = this.current.backMaterial.clone();
-    newBackMat.vertexShader = vertexShader;
-    newBackMat.needsUpdate = true;
-
-    // Swap materials
     this.current.material.dispose();
-    this.current.backMaterial.dispose();
-    this.current.points.material = newFrontMat;
-    this.current.backLayer.material = newBackMat;
-    this.current.material = newFrontMat;
-    this.current.backMaterial = newBackMat;
+    this.current.points.material = newMat;
+    this.current.material = newMat;
   }
 
   /** Get the current animation snippet (null = default) */
@@ -498,9 +463,7 @@ export class ThreeScene {
 
     this.current = buildPoints(data, this.animationSnippet ?? undefined);
     this.current.material.uniforms.u_numObjects.value = data.numObjects || 0;
-    this.current.backMaterial.uniforms.u_numObjects.value = data.numObjects || 0;
-    this.scene.add(this.current.backLayer); // back first
-    this.scene.add(this.current.points);    // front on top
+    this.scene.add(this.current.points);
 
     // Initialize creature system
     if (!this.creatureSystem) {
@@ -508,11 +471,9 @@ export class ThreeScene {
     }
     this.creatureSystem.setPointCloud(data);
 
-    // Set texture size uniforms on BOTH materials (only if creature system is active)
     if (!this.creatureSystem.disabled) {
       const [texW, texH] = this.creatureSystem.getTexSize();
       this.current.material.uniforms.u_texSize.value.set(texW, texH);
-      this.current.backMaterial.uniforms.u_texSize.value.set(texW, texH);
     }
   }
 
@@ -521,7 +482,6 @@ export class ThreeScene {
    * Does NOT call renderer.render — EffectComposer does that.
    */
   update(opts: RenderOpts): void {
-    // Apply external camera matrices (from camera-auto.ts Float32Arrays)
     _tmpProjection.fromArray(opts.projection);
     _tmpView.fromArray(opts.view);
     this.camera.projectionMatrix.copy(_tmpProjection);
@@ -535,26 +495,18 @@ export class ThreeScene {
       crossT = Math.min((performance.now() - this.crossfadeStart) / this.crossfadeDuration, 1.0);
     }
 
-    // Both clouds visible simultaneously during crossfade.
-    // Shader uses u_transition as alpha — prev fades out, current fades in.
     if (this.prev) {
       this.prev.points.visible = this.crossfading;
-      this.prev.backLayer.visible = this.crossfading;
       if (this.crossfading) {
         this.updateUniforms(this.prev.material, opts, 1.0 - crossT);
-        this.updateUniforms(this.prev.backMaterial, opts, 1.0 - crossT);
       }
     }
 
     if (this.current) {
       this.current.points.visible = true;
-      this.current.backLayer.visible = true;
       this.updateUniforms(this.current.material, opts, this.crossfading ? crossT : 1.0);
-      this.updateUniforms(this.current.backMaterial, opts, this.crossfading ? crossT : 1.0);
-      this.current.backMaterial.uniforms.u_pointScale.value = opts.pointScale * 0.95;
     }
 
-    // Crossfade complete — dispose prev
     if (this.crossfading && crossT >= 1.0) {
       this.disposePrev();
       this.crossfading = false;
@@ -575,10 +527,8 @@ export class ThreeScene {
     this.disposePrev();
     if (this.current) {
       this.scene.remove(this.current.points);
-      this.scene.remove(this.current.backLayer);
       this.current.geometry.dispose();
       this.current.material.dispose();
-      this.current.backMaterial.dispose();
       this.current = null;
     }
     if (this.creatureSystem) {
@@ -596,14 +546,10 @@ export class ThreeScene {
 
     const active = this.creatureSystem.hasCreatures;
     const mat = this.current.material;
-    const backMat = this.current.backMaterial;
     mat.uniforms.u_creaturesActive.value = active ? 1.0 : 0.0;
-    backMat.uniforms.u_creaturesActive.value = active ? 1.0 : 0.0;
 
     if (active) {
-      const tex = this.creatureSystem.getPositionTexture();
-      mat.uniforms.u_positionTex.value = tex;
-      backMat.uniforms.u_positionTex.value = tex;
+      mat.uniforms.u_positionTex.value = this.creatureSystem.getPositionTexture();
     }
   }
 
@@ -639,10 +585,8 @@ export class ThreeScene {
   private disposePrev(): void {
     if (this.prev) {
       this.scene.remove(this.prev.points);
-      this.scene.remove(this.prev.backLayer);
       this.prev.geometry.dispose();
       this.prev.material.dispose();
-      this.prev.backMaterial.dispose();
       this.prev = null;
     }
   }
