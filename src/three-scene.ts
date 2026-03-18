@@ -5,9 +5,62 @@ import * as THREE from 'three';
 import type { PointCloudData } from './pointcloud';
 import type { AudioData } from './audio';
 import { CreatureSystem } from './creature-system';
+import { controls } from './control-registry';
+import {
+  STYLE_FRAG_FUNCTIONS, STYLE_FRAG_INPUTS, STYLE_FRAG_MAIN,
+  STYLE_VERT_OUTPUTS, STYLE_VERT_MAIN,
+} from './particle-styles';
 
-/* ── Vertex Shader (GLSL 300 es, used with THREE.GLSL3) ── */
-const VERT = /* glsl */ `
+/* ── Default animation snippet (built-in per-segment displacement) ── */
+const DEFAULT_ANIMATION_SNIPPET = /* glsl */ `
+  // ── Per-segment displacement (core audio reactivity) ──
+  if (cat == 0) {
+    energy = u_band0 * 0.6 + u_band1 * 0.4;
+    float breath = sin(t * 1.5) * 0.5 + 0.5;
+    displacement = dir * energy * breath * 0.8;
+    colorTint = vec3(0.075, 0.025, 0.0) * energy;
+    sizeBoost = energy * 3.0;
+  } else if (cat == 1) {
+    energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
+    float swayX = sin(pos.y * 1.5 + pos.x * 0.3 + t * 2.0) * energy * 0.7;
+    float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.4;
+    displacement = vec3(swayX, swayY, 0.0);
+    colorTint = vec3(-0.01, 0.06, 0.01) * energy;
+    sizeBoost = energy * 1.5;
+  } else if (cat == 2) {
+    energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
+    float flowX = sin(pos.x * 0.4 + pos.y * 0.3 + t * 1.2) * energy * 0.9;
+    float flowY = cos(pos.y * 0.5 + pos.x * 0.2 + t * 0.9) * energy * 0.7;
+    displacement = vec3(flowX, flowY, 0.0);
+    colorTint = vec3(0.04, 0.05, 0.09) * energy;
+    sizeBoost = energy * 1.0;
+  } else if (cat == 3) {
+    energy = u_beat * 0.7 + u_band0 * 0.3;
+    float ripple = sin(length(pos.xz) * 4.0 - t * 6.0) * energy * 0.6;
+    displacement = vec3(0.0, ripple, 0.0);
+    colorTint = vec3(0.06, 0.04, 0.0) * u_beat;
+    sizeBoost = u_beat * 1.5;
+  } else if (cat == 4) {
+    energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
+    float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.2;
+    float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.15;
+    displacement = vec3(vibX, vibY, 0.0);
+    colorTint = vec3(0.025, 0.01, 0.06) * energy;
+    sizeBoost = energy * 1.0;
+  } else {
+    energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
+    float driftX = sin(pos.x * 0.3 + t * 0.6) * energy * 0.5;
+    float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.4;
+    displacement = vec3(driftX, driftY, 0.0);
+    colorTint = vec3(0.015, 0.015, 0.025) * energy;
+    sizeBoost = energy * 0.5;
+  }
+`;
+
+/* ── Build vertex shader with injectable animation snippet ── */
+export function buildVertexShader(animationSnippet?: string): string {
+  const snippet = animationSnippet || DEFAULT_ANIMATION_SNIPPET;
+  return /* glsl */ `
 precision highp float;
 
 // Attributes
@@ -49,9 +102,14 @@ uniform sampler2D u_positionTex;
 uniform vec2 u_texSize;
 uniform float u_creaturesActive;
 
+// Particle style
+uniform float u_particleStyle;
+
 out vec3 v_color;
 out float v_alpha;
 out float v_coherence;
+
+${STYLE_VERT_OUTPUTS}
 
 void main() {
   vec3 pos;
@@ -97,48 +155,8 @@ void main() {
 
   vec3 dir = u_projMode > 0.5 ? normalize(position) : vec3(0.0, 0.0, 1.0);
 
-  // ── Per-segment displacement (core audio reactivity) ──
-  if (cat == 0) {
-    energy = u_band0 * 0.6 + u_band1 * 0.4;
-    float breath = sin(t * 1.5) * 0.5 + 0.5;
-    displacement = dir * energy * breath * 0.8;
-    colorTint = vec3(0.075, 0.025, 0.0) * energy;
-    sizeBoost = energy * 3.0;
-  } else if (cat == 1) {
-    energy = u_band2 * 0.3 + u_band3 * 0.5 + u_band4 * 0.2;
-    float swayX = sin(pos.y * 1.5 + pos.x * 0.3 + t * 2.0) * energy * 0.7;
-    float swayY = cos(pos.x * 1.2 + pos.z * 0.4 + t * 1.6) * energy * 0.4;
-    displacement = vec3(swayX, swayY, 0.0);
-    colorTint = vec3(-0.01, 0.06, 0.01) * energy;
-    sizeBoost = energy * 1.5;
-  } else if (cat == 2) {
-    energy = u_band5 * 0.2 + u_band6 * 0.4 + u_band7 * 0.4;
-    float flowX = sin(pos.x * 0.4 + pos.y * 0.3 + t * 1.2) * energy * 0.9;
-    float flowY = cos(pos.y * 0.5 + pos.x * 0.2 + t * 0.9) * energy * 0.7;
-    displacement = vec3(flowX, flowY, 0.0);
-    colorTint = vec3(0.04, 0.05, 0.09) * energy;
-    sizeBoost = energy * 1.0;
-  } else if (cat == 3) {
-    energy = u_beat * 0.7 + u_band0 * 0.3;
-    float ripple = sin(length(pos.xz) * 4.0 - t * 6.0) * energy * 0.6;
-    displacement = vec3(0.0, ripple, 0.0);
-    colorTint = vec3(0.06, 0.04, 0.0) * u_beat;
-    sizeBoost = u_beat * 1.5;
-  } else if (cat == 4) {
-    energy = u_band3 * 0.3 + u_band4 * 0.4 + u_band5 * 0.3;
-    float vibX = sin(pos.y * 6.0 + t * 12.0) * energy * 0.2;
-    float vibY = sin(pos.x * 5.0 + t * 14.0) * energy * 0.15;
-    displacement = vec3(vibX, vibY, 0.0);
-    colorTint = vec3(0.025, 0.01, 0.06) * energy;
-    sizeBoost = energy * 1.0;
-  } else {
-    energy = u_band1 * 0.3 + u_band2 * 0.4 + u_band3 * 0.3;
-    float driftX = sin(pos.x * 0.3 + t * 0.6) * energy * 0.5;
-    float driftY = cos(pos.y * 0.25 + t * 0.5) * energy * 0.4;
-    displacement = vec3(driftX, driftY, 0.0);
-    colorTint = vec3(0.015, 0.015, 0.025) * energy;
-    sizeBoost = energy * 0.5;
-  }
+  // ── ANIMATION SNIPPET (injectable) ──
+${snippet}
 
   // ── Per-segment coherence ──
   float segCoh = clamp(u_segCoherence[cat], 0.0, 1.0);
@@ -242,12 +260,16 @@ void main() {
     gl_PointSize += recruitment * 3.0;
   }
 
+  // ── Particle style point size adjustments ──
+${STYLE_VERT_MAIN}
+
   v_alpha = u_transition;
   v_coherence = localCoherence;
 }
 `;
+}
 
-/* ── Fragment Shader (GLSL 300 es) ── */
+/* ── Fragment Shader (GLSL 300 es) — with particle style system ── */
 const FRAG = /* glsl */ `
 precision highp float;
 
@@ -255,21 +277,15 @@ in vec3 v_color;
 in float v_alpha;
 in float v_coherence;
 
+${STYLE_FRAG_INPUTS}
+
+uniform float u_particleStyle;
+
 out vec4 fragColor;
 
-void main() {
-  float dist = length(gl_PointCoord - 0.5);
+${STYLE_FRAG_FUNCTIONS}
 
-  if (v_coherence < 0.7) {
-    float shapeThreshold = mix(0.45, 0.7, v_coherence / 0.7);
-    if (dist > shapeThreshold) discard;
-    float edgeStart = shapeThreshold - 0.15;
-    float edge = 1.0 - smoothstep(edgeStart, shapeThreshold, dist);
-    fragColor = vec4(v_color * edge, v_alpha * edge);
-  } else {
-    fragColor = vec4(v_color, v_alpha);
-  }
-}
+${STYLE_FRAG_MAIN}
 `;
 
 /* ── Render options (same interface as PointCloudRenderer.render) ── */
@@ -332,11 +348,13 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_positionTex: { value: _dummyTexture },
     u_texSize: { value: new THREE.Vector2(1, 1) },
     u_creaturesActive: { value: 0 },
+    u_particleStyle: { value: 0 },
   };
 }
 
 /* ── Helper: build a Points mesh from PointCloudData ── */
-function buildPoints(data: PointCloudData): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } {
+function buildPoints(data: PointCloudData, animationSnippet?: string): { points: THREE.Points; material: THREE.ShaderMaterial; geometry: THREE.BufferGeometry; backLayer: THREE.Points; backMaterial: THREE.ShaderMaterial } {
+  const vertexShader = buildVertexShader(animationSnippet);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
   geometry.setAttribute('a_color', new THREE.Float32BufferAttribute(data.colors, 3));
@@ -346,7 +364,7 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
   // Front layer: full displacement
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    vertexShader: VERT,
+    vertexShader: vertexShader,
     fragmentShader: FRAG,
     uniforms: makeUniforms(),
     transparent: true,
@@ -363,7 +381,7 @@ function buildPoints(data: PointCloudData): { points: THREE.Points; material: TH
   // Back layer: nearly anchored, shared geometry
   const backMaterial = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    vertexShader: VERT,
+    vertexShader: vertexShader,
     fragmentShader: FRAG,
     uniforms: makeUniforms(),
     transparent: true,
@@ -433,8 +451,40 @@ export class ThreeScene {
     window.addEventListener('resize', () => this.resize());
   }
 
+  /** Current animation snippet (null = default) */
+  private animationSnippet: string | null = null;
+
   get hasCloud(): boolean {
     return this.current !== null;
+  }
+
+  /** Hot-swap animation behavior without regenerating the scene.
+   *  Pass null to revert to default animation. */
+  setAnimationSnippet(snippet: string | null): void {
+    this.animationSnippet = snippet;
+    if (!this.current) return;
+
+    const vertexShader = buildVertexShader(snippet ?? undefined);
+    const newFrontMat = this.current.material.clone();
+    newFrontMat.vertexShader = vertexShader;
+    newFrontMat.needsUpdate = true;
+
+    const newBackMat = this.current.backMaterial.clone();
+    newBackMat.vertexShader = vertexShader;
+    newBackMat.needsUpdate = true;
+
+    // Swap materials
+    this.current.material.dispose();
+    this.current.backMaterial.dispose();
+    this.current.points.material = newFrontMat;
+    this.current.backLayer.material = newBackMat;
+    this.current.material = newFrontMat;
+    this.current.backMaterial = newBackMat;
+  }
+
+  /** Get the current animation snippet (null = default) */
+  getAnimationSnippet(): string | null {
+    return this.animationSnippet;
   }
 
   /** Upload a new point cloud. Crossfades from previous if one exists. */
@@ -446,7 +496,7 @@ export class ThreeScene {
       this.crossfadeStart = performance.now();
     }
 
-    this.current = buildPoints(data);
+    this.current = buildPoints(data, this.animationSnippet ?? undefined);
     this.current.material.uniforms.u_numObjects.value = data.numObjects || 0;
     this.current.backMaterial.uniforms.u_numObjects.value = data.numObjects || 0;
     this.scene.add(this.current.backLayer); // back first
@@ -581,6 +631,7 @@ export class ThreeScene {
     u.u_chakra.value = opts.chakra;
     u.u_demonsLow.value = opts.demonsLow;
     u.u_demonsHigh.value = opts.demonsHigh;
+    u.u_particleStyle.value = controls.get('particleStyle', 0);
   }
 
   private disposePrev(): void {

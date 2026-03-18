@@ -9,6 +9,8 @@ const PRESETS = ['Cosmic Ocean', 'Neon Grid', 'Forest Fire', 'Crystal Cave', 'Vo
 
 export class UI {
   onGenerate: ((scene: string, vibe: string) => void) | null = null;
+  onAnimationPrompt: ((prompt: string) => void) | null = null;
+  onAnimationReset: (() => void) | null = null;
   onPresetSelect: ((name: string) => void) | null = null;
   onIntensityChange: ((value: number) => void) | null = null;
   onCoherenceChange: ((value: number) => void) | null = null;
@@ -64,6 +66,34 @@ export class UI {
     this.vibeInput.type = 'text';
     this.vibeInput.placeholder = 'set the vibe...';
     this.vibeInput.autocomplete = 'off';
+
+    // Animation prompt input (dual-prompt architecture)
+    const animRow = el('div', 'sv-anim-row');
+    const animInput = el('input', 'sv-input sv-input-anim') as HTMLInputElement;
+    animInput.type = 'text';
+    animInput.placeholder = 'animation behavior (e.g. "spiral outward on beat")';
+    animInput.autocomplete = 'off';
+
+    const animBtn = el('button', 'sv-btn sv-btn-anim') as HTMLButtonElement;
+    animBtn.textContent = 'Animate';
+    animBtn.addEventListener('click', () => {
+      const prompt = animInput.value.trim();
+      if (prompt) this.onAnimationPrompt?.(prompt);
+      this.resetAutoHide();
+    });
+
+    const animResetBtn = el('button', 'sv-btn sv-btn-anim-reset') as HTMLButtonElement;
+    animResetBtn.textContent = 'Reset';
+    animResetBtn.title = 'Reset to default animation';
+    animResetBtn.addEventListener('click', () => {
+      animInput.value = '';
+      this.onAnimationReset?.();
+      this.resetAutoHide();
+    });
+
+    animRow.appendChild(animInput);
+    animRow.appendChild(animBtn);
+    animRow.appendChild(animResetBtn);
 
     // Generate row: button + 360° toggle
     const generateRow = el('div', 'sv-generate-row');
@@ -375,6 +405,7 @@ export class UI {
     this.panel.appendChild(this.sceneInput);
     this.panel.appendChild(this.vibeInput);
     this.panel.appendChild(generateRow);
+    this.panel.appendChild(animRow);
     this.panel.appendChild(presetRow);
     this.panel.appendChild(sliderGroup);
     this.panel.appendChild(coherenceGroup);
@@ -834,6 +865,41 @@ const CSS = `
   background: var(--sv-accent);
   border-color: transparent;
   box-shadow: 0 0 14px var(--sv-accent-glow);
+}
+
+/* ── Animation row ───────────────────────────────── */
+.sv-anim-row {
+  display: flex;
+  gap: 6px;
+}
+.sv-anim-row .sv-input-anim {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.sv-btn-anim {
+  padding: 10px 14px;
+  background: rgba(92, 255, 178, 0.15);
+  border-radius: var(--sv-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(92, 255, 178, 0.25);
+  white-space: nowrap;
+  color: #5cffb2;
+}
+.sv-btn-anim:hover {
+  background: rgba(92, 255, 178, 0.25);
+}
+.sv-btn-anim-reset {
+  padding: 10px 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: var(--sv-radius-sm);
+  font-size: 12px;
+  border: 1px solid var(--sv-border);
+  white-space: nowrap;
+}
+.sv-btn-anim-reset:hover {
+  background: rgba(255, 255, 255, 0.13);
 }
 
 /* ── Preset buttons ──────────────────────────────── */

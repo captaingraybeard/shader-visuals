@@ -8,9 +8,12 @@ import { UI } from './ui';
 import type { ProjectionMode } from './pointcloud';
 import { generateFromServer } from './server';
 import { addControl, controls } from './control-registry';
+import { generateAnimationWithRetry } from './llm-shader-gen';
+import { buildVertexShader } from './three-scene';
 import { initControlUI } from './control-ui';
 import { updateControlUniforms } from './control-uniforms';
 import { getExplosionEffect } from './effects/explosion';
+import { getStyleRegistry } from './particle-styles';
 
 export class App {
   private audio: AudioEngine;
@@ -118,6 +121,9 @@ export class App {
     // Initialize explosion effect and attach to scene
     const explosion = getExplosionEffect();
     explosion.attach(this.threeScene.scene);
+
+    // Initialize particle style registry (registers the particleStyle control)
+    getStyleRegistry();
   }
 
   // ── UI wiring ─────────────────────────────────────
@@ -125,6 +131,15 @@ export class App {
   private wireUI(): void {
     this.ui.onGenerate = async (scene, _vibe) => {
       await this.generateScene(scene, _vibe);
+    };
+
+    this.ui.onAnimationPrompt = async (prompt) => {
+      await this.generateAnimation(prompt);
+    };
+
+    this.ui.onAnimationReset = () => {
+      this.threeScene.setAnimationSnippet(null);
+      this.ui.showToast('Animation reset to default', 2000);
     };
 
     this.ui.onJourneyToggle = (enabled) => {
@@ -299,6 +314,35 @@ export class App {
     } finally {
       this.ui.setLoading(false);
       if (isJourney) this.journeyGenerating = false;
+    }
+  }
+
+  // ── Animation generation (dual-prompt) ──────────
+
+  private async generateAnimation(prompt: string): Promise<void> {
+    const apiKey = localStorage.getItem('shader-visuals-api-key') || '';
+    if (!apiKey) {
+      this.ui.showToast('Set your API key in settings first', 3000);
+      return;
+    }
+
+    this.ui.setLoading(true, 'Generating animation...');
+
+    try {
+      const gl = this.threeScene.renderer.getContext() as WebGL2RenderingContext;
+      const result = await generateAnimationWithRetry(
+        prompt,
+        apiKey,
+        gl,
+        (snippet) => buildVertexShader(snippet),
+      );
+
+      this.threeScene.setAnimationSnippet(result.glsl);
+      this.ui.showToast(`Animation applied: "${prompt}"`, 3000);
+    } catch (e) {
+      this.ui.showError(`Animation generation failed:\n${(e as Error).message}`);
+    } finally {
+      this.ui.setLoading(false);
     }
   }
 
