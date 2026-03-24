@@ -13,9 +13,12 @@ interface SliderEntry {
 
 export class ControlUI {
   private panel: HTMLElement | null = null;
+  private header: HTMLElement | null = null;
+  private content: HTMLElement | null = null;
   private sliders = new Map<string, SliderEntry>();
   private unsubscribe: (() => void) | null = null;
   private updateQueued = false;
+  private collapsed = false;
   
   /** Initialize the dynamic control panel. Call after main UI init. */
   init(): void {
@@ -23,6 +26,19 @@ export class ControlUI {
     this.panel = document.createElement('div');
     this.panel.id = PANEL_ID;
     this.panel.className = 'sv-dynamic-controls';
+    
+    // Create collapsible header
+    this.header = document.createElement('div');
+    this.header.className = 'sv-dyn-header';
+    this.header.innerHTML = '<span class="sv-dyn-title">Controls</span><span class="sv-dyn-toggle">▼</span>';
+    this.header.addEventListener('click', () => this.toggleCollapse());
+    this.panel.appendChild(this.header);
+    
+    // Create content container for sliders
+    this.content = document.createElement('div');
+    this.content.className = 'sv-dyn-content';
+    this.panel.appendChild(this.content);
+    
     this.injectStyles();
     document.body.appendChild(this.panel);
     
@@ -31,6 +47,14 @@ export class ControlUI {
     
     // Initial render
     this.render();
+  }
+  
+  /** Toggle collapsed state */
+  private toggleCollapse(): void {
+    this.collapsed = !this.collapsed;
+    this.panel?.classList.toggle('sv-collapsed', this.collapsed);
+    const toggle = this.header?.querySelector('.sv-dyn-toggle');
+    if (toggle) toggle.textContent = this.collapsed ? '▶' : '▼';
   }
   
   /** Clean up. */
@@ -73,7 +97,7 @@ export class ControlUI {
         // Create new slider
         entry = this.createSlider(def);
         this.sliders.set(def.name, entry);
-        this.panel.appendChild(entry.container);
+        this.content!.appendChild(entry.container);
       }
       
       // Update value display
@@ -148,19 +172,63 @@ export class ControlUI {
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-radius: 16px;
-        padding: 12px 16px;
+        padding: 0;
         min-width: 180px;
         max-width: 240px;
         pointer-events: auto;
         touch-action: none;
         user-select: none;
         transition: opacity 0.2s, transform 0.2s;
+        overflow: hidden;
       }
       
       .sv-dynamic-controls.sv-hidden {
         opacity: 0;
         pointer-events: none;
         transform: translateX(20px);
+      }
+      
+      .sv-dyn-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 16px;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .sv-dyn-header:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      
+      .sv-dyn-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.9);
+      }
+      
+      .sv-dyn-toggle {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.5);
+        transition: transform 0.2s;
+      }
+      
+      .sv-dyn-content {
+        padding: 12px 16px;
+        max-height: 400px;
+        overflow-y: auto;
+        transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s;
+      }
+      
+      .sv-dynamic-controls.sv-collapsed .sv-dyn-content {
+        max-height: 0;
+        padding: 0 16px;
+        opacity: 0;
+        overflow: hidden;
+      }
+      
+      .sv-dynamic-controls.sv-collapsed .sv-dyn-header {
+        border-bottom: none;
       }
       
       .sv-dyn-slider-group {

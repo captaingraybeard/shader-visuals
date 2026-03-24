@@ -7792,7 +7792,7 @@ The previous snippet had a compile error. Fix it:
 ${t}`);const o=await fetch(ANTHROPIC_API_URL,{method:"POST",headers:{"x-api-key":e,"anthropic-version":"2023-06-01","content-type":"application/json","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:MODEL,max_tokens:2048,system:SYSTEM_PROMPT,messages:[{role:"user",content:i}]})});if(!o.ok){const h=await o.text();throw o.status===401?new Error("Invalid API key. Check your Anthropic API key in settings."):o.status===429?new Error("Rate limited. Wait a moment and try again."):new Error(`API error (${o.status}): ${h}`)}const l=(await o.json()).content?.[0]?.text;if(!l)throw new Error("Empty response from Claude API");const f=extractSnippet(l),p=validateSnippet(f);if(!p.valid)throw new Error(`Generated snippet failed validation:
 ${p.errors.join(`
 `)}`);return{glsl:p.sanitized,prompt:a}}async function generateAnimationWithRetry(a,e,t,i){const o=await generateAnimationSnippet(a,e);if(t&&i){const u=i(o.glsl),l=tryCompile(t,u);if(l){const f=await generateAnimationSnippet(a,e,l),p=i(f.glsl),h=tryCompile(t,p);if(h)throw new Error(`Shader compile failed after retry:
-${h}`);return f}}return o}const PANEL_ID="sv-dynamic-controls";class ControlUI{constructor(){K(this,"panel",null);K(this,"sliders",new Map);K(this,"unsubscribe",null);K(this,"updateQueued",!1)}init(){this.panel=document.createElement("div"),this.panel.id=PANEL_ID,this.panel.className="sv-dynamic-controls",this.injectStyles(),document.body.appendChild(this.panel),this.unsubscribe=controls.onChange(()=>this.queueUpdate()),this.render()}dispose(){this.unsubscribe?.(),this.panel?.remove(),this.sliders.clear()}queueUpdate(){this.updateQueued||(this.updateQueued=!0,requestAnimationFrame(()=>{this.updateQueued=!1,this.render()}))}render(){if(!this.panel)return;const e=controls.getDefs(),t=new Set(e.map(i=>i.name));for(const[i,o]of this.sliders)t.has(i)||(o.container.remove(),this.sliders.delete(i));for(const i of e){let o=this.sliders.get(i.name);o||(o=this.createSlider(i),this.sliders.set(i.name,o),this.panel.appendChild(o.container));const u=(i.value-i.min)/(i.max-i.min)*100;o.slider.value=String(u),o.valueLabel.textContent=i.value.toFixed(2)}this.panel.classList.toggle("sv-hidden",e.length===0)}createSlider(e){const t=document.createElement("div");t.className="sv-dyn-slider-group",t.dataset.control=e.name;const i=document.createElement("div");i.className="sv-dyn-slider-header";const o=document.createElement("span");o.className="sv-dyn-slider-title",o.textContent=e.label||e.name;const u=document.createElement("span");u.className="sv-dyn-slider-value",u.textContent=e.value.toFixed(2),i.appendChild(o),i.appendChild(u);const l=document.createElement("input");l.type="range",l.className="sv-slider",l.min="0",l.max="100",l.step="0.1";const f=(e.value-e.min)/(e.max-e.min)*100;return l.value=String(f),l.addEventListener("input",()=>{const p=parseFloat(l.value),h=e.min+p/100*(e.max-e.min),d=Math.round(h/e.step)*e.step;controls.set(e.name,d),u.textContent=d.toFixed(2)}),t.appendChild(i),t.appendChild(l),{container:t,slider:l,valueLabel:u}}injectStyles(){if(document.getElementById("sv-dynamic-controls-style"))return;const e=document.createElement("style");e.id="sv-dynamic-controls-style",e.textContent=`
+${h}`);return f}}return o}const PANEL_ID="sv-dynamic-controls";class ControlUI{constructor(){K(this,"panel",null);K(this,"header",null);K(this,"content",null);K(this,"sliders",new Map);K(this,"unsubscribe",null);K(this,"updateQueued",!1);K(this,"collapsed",!1)}init(){this.panel=document.createElement("div"),this.panel.id=PANEL_ID,this.panel.className="sv-dynamic-controls",this.header=document.createElement("div"),this.header.className="sv-dyn-header",this.header.innerHTML='<span class="sv-dyn-title">Controls</span><span class="sv-dyn-toggle">▼</span>',this.header.addEventListener("click",()=>this.toggleCollapse()),this.panel.appendChild(this.header),this.content=document.createElement("div"),this.content.className="sv-dyn-content",this.panel.appendChild(this.content),this.injectStyles(),document.body.appendChild(this.panel),this.unsubscribe=controls.onChange(()=>this.queueUpdate()),this.render()}toggleCollapse(){this.collapsed=!this.collapsed,this.panel?.classList.toggle("sv-collapsed",this.collapsed);const e=this.header?.querySelector(".sv-dyn-toggle");e&&(e.textContent=this.collapsed?"▶":"▼")}dispose(){this.unsubscribe?.(),this.panel?.remove(),this.sliders.clear()}queueUpdate(){this.updateQueued||(this.updateQueued=!0,requestAnimationFrame(()=>{this.updateQueued=!1,this.render()}))}render(){if(!this.panel)return;const e=controls.getDefs(),t=new Set(e.map(i=>i.name));for(const[i,o]of this.sliders)t.has(i)||(o.container.remove(),this.sliders.delete(i));for(const i of e){let o=this.sliders.get(i.name);o||(o=this.createSlider(i),this.sliders.set(i.name,o),this.content.appendChild(o.container));const u=(i.value-i.min)/(i.max-i.min)*100;o.slider.value=String(u),o.valueLabel.textContent=i.value.toFixed(2)}this.panel.classList.toggle("sv-hidden",e.length===0)}createSlider(e){const t=document.createElement("div");t.className="sv-dyn-slider-group",t.dataset.control=e.name;const i=document.createElement("div");i.className="sv-dyn-slider-header";const o=document.createElement("span");o.className="sv-dyn-slider-title",o.textContent=e.label||e.name;const u=document.createElement("span");u.className="sv-dyn-slider-value",u.textContent=e.value.toFixed(2),i.appendChild(o),i.appendChild(u);const l=document.createElement("input");l.type="range",l.className="sv-slider",l.min="0",l.max="100",l.step="0.1";const f=(e.value-e.min)/(e.max-e.min)*100;return l.value=String(f),l.addEventListener("input",()=>{const p=parseFloat(l.value),h=e.min+p/100*(e.max-e.min),d=Math.round(h/e.step)*e.step;controls.set(e.name,d),u.textContent=d.toFixed(2)}),t.appendChild(i),t.appendChild(l),{container:t,slider:l,valueLabel:u}}injectStyles(){if(document.getElementById("sv-dynamic-controls-style"))return;const e=document.createElement("style");e.id="sv-dynamic-controls-style",e.textContent=`
       .sv-dynamic-controls {
         position: fixed;
         top: 80px;
@@ -7802,19 +7802,63 @@ ${h}`);return f}}return o}const PANEL_ID="sv-dynamic-controls";class ControlUI{c
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-radius: 16px;
-        padding: 12px 16px;
+        padding: 0;
         min-width: 180px;
         max-width: 240px;
         pointer-events: auto;
         touch-action: none;
         user-select: none;
         transition: opacity 0.2s, transform 0.2s;
+        overflow: hidden;
       }
       
       .sv-dynamic-controls.sv-hidden {
         opacity: 0;
         pointer-events: none;
         transform: translateX(20px);
+      }
+      
+      .sv-dyn-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 16px;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .sv-dyn-header:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      
+      .sv-dyn-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.9);
+      }
+      
+      .sv-dyn-toggle {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.5);
+        transition: transform 0.2s;
+      }
+      
+      .sv-dyn-content {
+        padding: 12px 16px;
+        max-height: 400px;
+        overflow-y: auto;
+        transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s;
+      }
+      
+      .sv-dynamic-controls.sv-collapsed .sv-dyn-content {
+        max-height: 0;
+        padding: 0 16px;
+        opacity: 0;
+        overflow: hidden;
+      }
+      
+      .sv-dynamic-controls.sv-collapsed .sv-dyn-header {
+        border-bottom: none;
       }
       
       .sv-dyn-slider-group {
