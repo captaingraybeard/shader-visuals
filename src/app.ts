@@ -21,8 +21,9 @@ type RendererType = 'points' | 'instanced';
 function getRendererType(): RendererType {
   const params = new URLSearchParams(window.location.search);
   const r = params.get('renderer');
-  if (r === 'instanced') return 'instanced';
-  return 'points';
+  // Default to instanced, allow ?renderer=points for fallback
+  if (r === 'points') return 'points';
+  return 'instanced';
 }
 
 export class App {
