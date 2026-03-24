@@ -72,9 +72,12 @@ uniform float u_creaturesActive;
 // Particle style
 uniform float u_particleStyle;
 
-// Frustum culling params
+// Frustum culling / LOD params
 uniform float u_cullRadius;
 uniform vec3 u_cameraPos;
+uniform float u_lodNear;     // Distance where LOD starts (full detail before this)
+uniform float u_lodFar;      // Distance where LOD is maximum (thin out heavily)
+uniform float u_lodFactor;   // 0 = no thinning, 1 = aggressive thinning
 
 // Outputs
 out vec3 v_color;
@@ -274,6 +277,23 @@ void main() {
 
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(worldPos, 1.0);
 
+  // ── LOD: distance-based thinning ──
+  // At far distances, randomly cull points to improve performance
+  float camDist = length(worldPos - u_cameraPos);
+  float lodT = clamp((camDist - u_lodNear) / (u_lodFar - u_lodNear + 0.001), 0.0, 1.0);
+  
+  // Use instance index as deterministic random seed
+  float lodRand = fract(float(instanceIdx) * 0.61803398875);  // golden ratio for good distribution
+  
+  // Probability of keeping this point decreases with distance
+  // At lodT=0 (near), keep all. At lodT=1 (far), thin by lodFactor
+  float keepProb = 1.0 - lodT * u_lodFactor;
+  
+  // Cull by moving off-screen if random > keepProb
+  if (lodRand > keepProb) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);  // Off-screen (clip space)
+  }
+
   // ── Outputs ──
   v_uv = uv;
   v_color = instanceColor;
@@ -384,6 +404,10 @@ export interface RenderOpts {
   chakra: number[];
   demonsLow: number;
   demonsHigh: number;
+  // LOD options (optional — uses defaults if not provided)
+  lodNear?: number;
+  lodFar?: number;
+  lodFactor?: number;
 }
 
 /* ── Dummy texture for unbound samplers ── */
@@ -426,6 +450,9 @@ function makeUniforms(): Record<string, THREE.IUniform> {
     u_particleStyle: { value: 0 },
     u_cullRadius: { value: 50 },
     u_cameraPos: { value: new THREE.Vector3() },
+    u_lodNear: { value: 5 },      // Start thinning at 5 units
+    u_lodFar: { value: 30 },      // Maximum thinning at 30 units
+    u_lodFactor: { value: 0.7 },  // Remove up to 70% of distant points
   };
 }
 
@@ -662,6 +689,11 @@ export class InstancedRenderer {
     
     // Update camera position for LOD/culling
     u.u_cameraPos.value.setFromMatrixPosition(this.camera.matrixWorld);
+    
+    // LOD parameters (use defaults if not provided)
+    if (opts.lodNear !== undefined) u.u_lodNear.value = opts.lodNear;
+    if (opts.lodFar !== undefined) u.u_lodFar.value = opts.lodFar;
+    if (opts.lodFactor !== undefined) u.u_lodFactor.value = opts.lodFactor;
   }
 
   private disposePrev(): void {
