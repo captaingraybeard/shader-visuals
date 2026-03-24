@@ -107,7 +107,9 @@ export class ControlUI {
     }
     
     // Show/hide panel based on whether we have controls
-    this.panel.classList.toggle('sv-hidden', defs.length === 0);
+    const hasControls = defs.length > 0;
+    this.panel.classList.toggle('sv-hidden', !hasControls);
+    console.log('[ControlUI] render:', defs.length, 'controls, visible:', hasControls);
   }
   
   /** Create a slider element for a control definition. */
