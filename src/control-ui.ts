@@ -30,7 +30,7 @@ export class ControlUI {
     // Create collapsible header
     this.header = document.createElement('div');
     this.header.className = 'sv-dyn-header';
-    this.header.innerHTML = '<span class="sv-dyn-title">Controls</span><span class="sv-dyn-toggle">▼</span>';
+    this.header.innerHTML = '<span class="sv-dyn-title">⚙️ Controls</span><span class="sv-dyn-toggle">▼</span>';
     this.header.addEventListener('click', () => this.toggleCollapse());
     this.panel.appendChild(this.header);
     
@@ -169,8 +169,9 @@ export class ControlUI {
         position: fixed;
         top: 80px;
         right: 10px;
-        z-index: 1002;
-        background: rgba(0, 0, 0, 0.8);
+        z-index: 9999;
+        background: rgba(0, 0, 0, 0.9);
+        border: 2px solid rgba(255, 255, 255, 0.3);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
         border-radius: 16px;
