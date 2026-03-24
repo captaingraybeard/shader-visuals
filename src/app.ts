@@ -3,6 +3,7 @@ import { AudioEngine, TONE_PRESETS } from './audio';
 import type { AudioData } from './audio';
 import { AutoCamera } from './camera-auto';
 import { ThreeScene } from './three-scene';
+import { SceneInstanced } from './scene-instanced';
 import { ThreePostProcess } from './three-postprocess';
 import { UI } from './ui';
 import type { ProjectionMode } from './pointcloud';
@@ -15,12 +16,22 @@ import { updateControlUniforms } from './control-uniforms';
 import { getExplosionEffect } from './effects/explosion';
 import { getStyleRegistry } from './particle-styles';
 
+// ── Renderer type selection (URL param: ?renderer=instanced) ──
+type RendererType = 'points' | 'instanced';
+function getRendererType(): RendererType {
+  const params = new URLSearchParams(window.location.search);
+  const r = params.get('renderer');
+  if (r === 'instanced') return 'instanced';
+  return 'points';
+}
+
 export class App {
   private audio: AudioEngine;
-  private threeScene!: ThreeScene;
+  private threeScene!: ThreeScene | SceneInstanced;
   private postprocess: ThreePostProcess;
   private camera: AutoCamera;
   private ui: UI;
+  private rendererType: RendererType;
 
   private intensity = 0.5;
   private coherence = 0.8;
@@ -60,14 +71,21 @@ export class App {
     this.postprocess = new ThreePostProcess();
     this.camera = new AutoCamera();
     this.ui = new UI();
+    this.rendererType = getRendererType();
   }
 
   async init(): Promise<void> {
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
     if (!canvas) throw new Error('Canvas element not found');
 
-    // Init Three.js scene (constructor takes canvas)
-    this.threeScene = new ThreeScene(canvas);
+    // Init Three.js scene — use instanced renderer if ?renderer=instanced
+    if (this.rendererType === 'instanced') {
+      console.log('[App] Using instanced quad renderer');
+      this.threeScene = new SceneInstanced(canvas);
+    } else {
+      console.log('[App] Using points renderer');
+      this.threeScene = new ThreeScene(canvas);
+    }
 
     // Init post-processing with Three.js renderer/scene/camera
     this.postprocess.init(
@@ -520,6 +538,7 @@ export class App {
     const gl = this.threeScene.renderer.getContext();
     const info = this.threeScene.renderer.info;
     const lines = [
+      `renderer: ${this.rendererType}`,
       `frame: ${this.frameCount}`,
       `hasCloud: ${this.threeScene.hasCloud}`,
       `scene children: ${this.threeScene.scene.children.length}`,
